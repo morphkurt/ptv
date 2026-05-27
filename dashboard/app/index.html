@@ -1208,14 +1208,15 @@ function renderHistory(data) {
 
   const rows = trains.map(t => {
     const dc = t.delay_min <= 2 ? "delay-ok" : t.delay_min <= 5 ? "delay-warn" : "delay-bad";
-    const travelCell = t.travel_min_actual != null
-      ? `${t.travel_min_actual}m <small style="color:var(--muted)">(sch ${t.travel_min_scheduled}m)</small>`
-      : `${t.travel_min_scheduled}m`;
+    const arrActualClass = !t.arrive_actual ? "" :
+      t.arrive_actual <= t.arrive_scheduled ? "delay-ok" :
+      timeDiffMin(t.arrive_scheduled, t.arrive_actual) <= 5 ? "delay-warn" : "delay-bad";
     return `<tr>
       <td>${t.depart_scheduled}</td>
       <td>${t.depart_actual || "–"}</td>
       <td class="${dc}">${t.delay_min >= 0 ? "+" : ""}${t.delay_min}m</td>
-      <td>${travelCell}</td>
+      <td>${t.arrive_scheduled || "–"}</td>
+      <td class="${arrActualClass}">${t.arrive_actual || "–"}</td>
     </tr>`;
   }).join("");
 
@@ -1243,7 +1244,7 @@ function renderHistory(data) {
     </div>
     <div class="history-table-wrap">
       <table class="history-table">
-        <thead><tr><th>Sched</th><th>Actual</th><th>Delay</th><th>Travel</th></tr></thead>
+        <thead><tr><th>Dep Sched</th><th>Dep Actual</th><th>Delay</th><th>Arr Sched</th><th>Arr Actual</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -1285,8 +1286,9 @@ function renderDelayChart(trains) {
             label: (item) => {
               const t = trains[item.dataIndex];
               const lines = [`Delay: ${t.delay_min >= 0 ? "+" : ""}${t.delay_min} min`];
-              if (t.depart_actual) lines.push(`Actual: ${t.depart_actual}`);
-              if (t.travel_min_actual != null) lines.push(`Travel: ${t.travel_min_actual} min (sch ${t.travel_min_scheduled})`);
+              if (t.depart_actual) lines.push(`Dep actual: ${t.depart_actual}`);
+              if (t.arrive_scheduled) lines.push(`Arr sched: ${t.arrive_scheduled}`);
+              if (t.arrive_actual) lines.push(`Arr actual: ${t.arrive_actual}`);
               return lines;
             }
           },
