@@ -1159,6 +1159,14 @@ function switchView(view) {
   if (view === "history") {
     const dateInput = document.getElementById("historyDate");
     if (!dateInput.value) dateInput.value = melbourneDateISO();
+    const routeMap = {
+      townhall:     "sandown_park_outbound",
+      sandown_park: "sandown_park_inbound",
+      mentone:      "mentone_inbound",
+    };
+    if (currentStation && routeMap[currentStation]) {
+      document.getElementById("historyRoute").value = routeMap[currentStation];
+    }
     loadHistory();
   }
 }
