@@ -1214,12 +1214,19 @@ function renderHistory(data) {
     const arrActualCell = t.arrive_actual
       ? `<span class="${arrActualClass}">${t.arrive_actual}</span>`
       : `<span style="color:var(--muted)">${t.arrive_scheduled || "–"}</span>`;
+    const durActual = t.travel_min_actual != null ? t.travel_min_actual : null;
+    const durSched  = t.travel_min_scheduled;
+    const durClass  = durActual == null ? "" : durActual <= durSched ? "delay-ok" : durActual - durSched <= 5 ? "delay-warn" : "delay-bad";
+    const durCell   = durActual != null
+      ? `<span class="${durClass}">${durActual}m</span>`
+      : `<span style="color:var(--muted)">${durSched}m</span>`;
     return `<tr>
       <td>${t.depart_scheduled}</td>
       <td>${t.depart_actual || "–"}</td>
       <td class="${dc}">${t.delay_min >= 0 ? "+" : ""}${t.delay_min}m</td>
       <td>${t.arrive_scheduled || "–"}</td>
       <td>${arrActualCell}</td>
+      <td>${durCell}</td>
     </tr>`;
   }).join("");
 
@@ -1247,7 +1254,7 @@ function renderHistory(data) {
     </div>
     <div class="history-table-wrap">
       <table class="history-table">
-        <thead><tr><th>Dep Sched</th><th>Dep Actual</th><th>Delay</th><th>Arr Sched</th><th>Arr Actual</th></tr></thead>
+        <thead><tr><th>Dep Sched</th><th>Dep Actual</th><th>Delay</th><th>Arr Sched</th><th>Arr Actual</th><th>Duration</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
