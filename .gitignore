@@ -1,0 +1,17 @@
+# Terraform
+terraform/terraform.tfvars
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+
+# Lambda build artifacts
+lambda/lambda.zip
+lambda/bootstrap
+lambda/ptv-lambda
+
+# Claude Code local settings (may contain secrets in permission rules)
+.claude/
+
+# macOS
+.DS_Store

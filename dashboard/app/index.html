@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PTV">
+  <meta name="theme-color" content="#0f1117">
+  <link rel="manifest" href="manifest.json">
+  <title>PTV Commute</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1f2e;
+      --border: #2d3748;
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --blue: #3b82f6;
+      --green: #4ade80;
+      --orange: #fb923c;
+      --red: #f87171;
+      --safe-top: env(safe-area-inset-top);
+      --safe-bot: env(safe-area-inset-bottom);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100dvh;
+      padding: calc(var(--safe-top) + 16px) 16px calc(var(--safe-bot) + 16px);
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ─────────────────────────────────────── */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 20px;
+    }
+
+    .header-left h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: var(--blue);
+    }
+
+    .clock {
+      font-size: 1.9rem;
+      font-weight: 300;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .date-line {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .header-right {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding-top: 4px;
+    }
+
+    .btn-icon {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-icon:hover, .btn-icon.active { border-color: var(--blue); color: var(--blue); }
+
+    /* ── Station pill ───────────────────────────────── */
+    .station-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .station-icon { font-size: 1.3rem; }
+
+    .station-name {
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    .station-dist {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+
+    .station-bar .change-btn {
+      margin-left: auto;
+      font-size: 0.72rem;
+      color: var(--blue);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    .station-bar .change-btn:active { background: rgba(59,130,246,0.1); }
+
+    /* ── Train cards ────────────────────────────────── */
+    .cards { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--blue);
+      border-radius: 16px 0 0 16px;
+    }
+
+    .card-dest {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--blue);
+      margin-bottom: 14px;
+      text-transform: uppercase;
+    }
+
+    .timing {
+      display: flex;
+      gap: 0;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+
+    .timing-col {
+      flex: 1;
+    }
+
+    .timing-col + .timing-col {
+      border-left: 1px solid var(--border);
+      padding-left: 16px;
+      margin-left: 16px;
+    }
+
+    .timing-label {
+      font-size: 0.68rem;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+
+    .timing-time {
+      font-size: 2rem;
+      font-weight: 300;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .urgency {
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-top: 4px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      display: inline-block;
+    }
+    .urgency.ok      { background: rgba(74,222,128,0.12); color: var(--green); }
+    .urgency.soon    { background: rgba(251,146,60,0.12);  color: var(--orange); }
+    .urgency.urgent  { background: rgba(248,113,113,0.12); color: var(--red); }
+    .urgency.gone    { background: rgba(100,116,139,0.12); color: var(--muted); }
+
+    .travel-min {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* Transfer */
+    .transfer {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      margin-top: 4px;
+    }
+
+    .transfer-title {
+      font-size: 0.68rem;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .transfer-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 0.82rem;
+      margin-bottom: 4px;
+    }
+
+    .transfer-label { color: var(--muted); }
+    .transfer-value { font-weight: 500; font-variant-numeric: tabular-nums; }
+    .transfer-line  { font-size: 0.72rem; color: var(--muted); text-align: right; margin-top: -2px; margin-bottom: 4px; }
+
+    /* Disruptions */
+    .disruption {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: rgba(251,146,60,0.08);
+      border: 1px solid rgba(251,146,60,0.2);
+      border-radius: 10px;
+      font-size: 0.78rem;
+      color: var(--orange);
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .disruption-icon { flex-shrink: 0; }
+
+    /* Error / loading states */
+    .state-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px 24px;
+      text-align: center;
+    }
+
+    .state-card .icon { font-size: 2.5rem; margin-bottom: 12px; }
+    .state-card h2   { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+    .state-card p    { font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+
+    .state-card .station-picker {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .station-picker-btn {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .station-picker-btn:hover { border-color: var(--blue); }
+
+    /* Spinner */
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Footer ─────────────────────────────────────── */
+    footer {
+      margin-top: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .refresh-bar {
+      flex: 1;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .refresh-progress {
+      height: 100%;
+      background: var(--blue);
+      border-radius: 2px;
+      transition: width 1s linear;
+    }
+
+    .refresh-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .btn-refresh {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 8px;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: border-color 0.15s, transform 0.3s;
+    }
+    .btn-refresh:hover   { border-color: var(--blue); color: var(--blue); }
+    .btn-refresh.spinning { transform: rotate(360deg); }
+
+    /* Settings overlay */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 100;
+      align-items: flex-end;
+    }
+    .overlay.open { display: flex; }
+
+    .settings-sheet {
+      background: var(--surface);
+      border-radius: 20px 20px 0 0;
+      padding: 20px 20px calc(var(--safe-bot) + 20px);
+      width: 100%;
+    }
+
+    .settings-title {
+      font-weight: 700;
+      margin-bottom: 20px;
+    }
+
+    .settings-row {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .settings-row label {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .settings-row input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.85rem;
+      width: 100%;
+    }
+
+    /* ── Time controls ──────────────────────────────── */
+    .time-controls {
+      margin-bottom: 16px;
+    }
+
+    .mode-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .mode-tab {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 8px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .mode-tab.active {
+      background: rgba(59,130,246,0.12);
+      border-color: var(--blue);
+      color: var(--blue);
+    }
+
+    .time-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    input[type="time"] {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 1.1rem;
+      font-variant-numeric: tabular-nums;
+      -webkit-appearance: none;
+      transition: border-color 0.15s;
+    }
+
+    input[type="time"].custom { border-color: var(--blue); }
+
+    .now-btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .now-btn.active { border-color: var(--blue); color: var(--blue); }
+
+    .settings-save {
+      width: 100%;
+      background: var(--blue);
+      border: none;
+      color: #fff;
+      padding: 13px;
+      border-radius: 10px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 6px;
+    }
+
+    .realtime-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-top: 1px solid var(--border);
+      margin-top: 8px;
+    }
+    .realtime-row span { font-size: 0.9rem; }
+
+    /* Toggle switch */
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 26px;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 13px;
+      transition: background 0.2s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--blue); }
+    .toggle-thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 20px; height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(18px); }
+
+    /* ── Nav tabs ───────────────────────────────────── */
+    .nav-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      background: var(--surface);
+      padding: 4px;
+      border-radius: 10px;
+      flex-shrink: 0;
+    }
+
+    .nav-tab {
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--muted);
+      padding: 8px;
+      border-radius: 7px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .nav-tab.active { background: var(--bg); color: var(--text); }
+
+    /* ── History panel ──────────────────────────────── */
+    #historyPanel { display: none; flex: 1; overflow-y: auto; }
+
+    body.view-history #stationBar,
+    body.view-history #timeControls,
+    body.view-history #cards,
+    body.view-history footer { display: none !important; }
+
+    body.view-history #historyPanel { display: block; }
+
+    .history-controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .history-controls select,
+    .history-controls input[type="date"] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.82rem;
+      -webkit-appearance: none;
+    }
+
+    .history-controls select { flex: 1; }
+    .history-controls input[type="date"] { width: 148px; }
+
+    .history-stats {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .hist-stat {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 8px;
+      text-align: center;
+    }
+
+    .hist-stat-val {
+      font-size: 1.35rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .hist-stat-val.green  { color: var(--green); }
+    .hist-stat-val.orange { color: var(--orange); }
+    .hist-stat-val.red    { color: var(--red); }
+
+    .hist-stat-label {
+      font-size: 0.65rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 4px;
+    }
+
+    .chart-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .history-table-wrap { overflow-x: auto; }
+
+    .history-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+
+    .history-table th {
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .history-table td {
+      padding: 8px;
+      border-bottom: 1px solid rgba(45,55,72,0.4);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .history-table tr:last-child td { border-bottom: none; }
+
+    .delay-ok   { color: var(--green); }
+    .delay-warn { color: var(--orange); }
+    .delay-bad  { color: var(--red); }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ── Header ────────────────────────────────────────── -->
+<header>
+  <div class="header-left">
+    <h1>PTV COMMUTE</h1>
+    <div class="clock" id="clock">--:--</div>
+    <div class="date-line" id="dateLine">–</div>
+  </div>
+  <div class="header-right">
+    <button class="btn-icon" id="realtimeBtn" title="Toggle realtime">⚡</button>
+    <button class="btn-icon" onclick="openSettings()" title="Settings">⚙</button>
+  </div>
+</header>
+
+<!-- ── Nav tabs ───────────────────────────────────────── -->
+<div class="nav-tabs">
+  <button class="nav-tab active" id="navLive"    onclick="switchView('live')">Live</button>
+  <button class="nav-tab"        id="navHistory" onclick="switchView('history')">History</button>
+</div>
+
+<!-- ── Station bar ───────────────────────────────────── -->
+<div class="station-bar" id="stationBar" style="display:none">
+  <div class="station-icon">📍</div>
+  <div>
+    <div class="station-name" id="stationName">–</div>
+    <div class="station-dist" id="stationDist">–</div>
+  </div>
+  <button class="change-btn" onclick="showStationPicker()">Change</button>
+</div>
+
+<!-- ── Time controls ─────────────────────────────────── -->
+<div class="time-controls" id="timeControls" style="display:none">
+  <div class="mode-tabs" id="modeTabs" style="display:none">
+    <button class="mode-tab active" id="tabDepart" onclick="setMode('depart_at')">Depart at</button>
+    <button class="mode-tab"        id="tabArrive" onclick="setMode('arrive_by')">Arrive by</button>
+  </div>
+  <div class="time-row">
+    <input type="time" id="timeInput" onchange="onTimeChange()">
+    <button class="now-btn" id="nowBtn" onclick="clearCustomTime()">Now</button>
+  </div>
+</div>
+
+<!-- ── History panel ─────────────────────────────────── -->
+<div id="historyPanel">
+  <div class="history-controls">
+    <select id="historyRoute" onchange="loadHistory()">
+      <option value="sandown_park_inbound">Sandown Park → Town Hall</option>
+      <option value="sandown_park_outbound">Town Hall → Sandown Park</option>
+      <option value="mentone_inbound">Mentone → Town Hall</option>
+      <option value="mentone_outbound">Town Hall → Mentone</option>
+    </select>
+    <input type="date" id="historyDate" onchange="loadHistory()">
+  </div>
+  <div id="historyContent"></div>
+</div>
+
+<!-- ── Main content ──────────────────────────────────── -->
+<div class="cards" id="cards">
+  <div class="state-card">
+    <div class="spinner"></div>
+    <h2>Finding your location…</h2>
+    <p>Allow location access to detect your nearest station.</p>
+  </div>
+</div>
+
+<!-- ── Footer ────────────────────────────────────────── -->
+<footer>
+  <div class="refresh-bar">
+    <div class="refresh-progress" id="refreshProgress" style="width:100%"></div>
+  </div>
+  <div class="refresh-label" id="refreshLabel">–</div>
+  <button class="btn-refresh" id="refreshBtn" onclick="refresh()" title="Refresh">↺</button>
+</footer>
+
+<!-- ── Settings overlay ──────────────────────────────── -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)saveSettings()">
+  <div class="settings-sheet">
+    <div class="settings-title">Settings</div>
+    <div class="settings-row">
+      <label>API URL</label>
+      <input type="url" id="apiUrlInput" placeholder="https://xxxx.execute-api.ap-southeast-2.amazonaws.com">
+    </div>
+    <div class="realtime-row">
+      <span>Live estimated times</span>
+      <label class="toggle">
+        <input type="checkbox" id="realtimeToggle" onchange="toggleRealtime(this.checked)">
+        <div class="toggle-track"></div>
+        <div class="toggle-thumb"></div>
+      </label>
+    </div>
+    <button class="settings-save" id="saveBtn" onclick="saveSettings()">Save</button>
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────
+const HARDCODED_API = ""; // set via Settings (⚙) or configure localStorage.ptv_api_url
+const REFRESH_SECS = 60;
+
+const STATIONS = {
+  townhall:     { name: "Town Hall",    lat: -37.8143, lon: 144.9667 },
+  mentone:      { name: "Mentone",      lat: -37.9831, lon: 145.0636 },
+  sandown_park: { name: "Sandown Park", lat: -37.9443, lon: 145.1013 },
+};
+
+// ── State ─────────────────────────────────────────────
+let currentStation = localStorage.getItem("ptv_station") || null;
+let realtimeMode   = localStorage.getItem("ptv_realtime") === "true";
+let timeMode       = "depart_at"; // "depart_at" | "arrive_by"
+let customTime     = null;        // null = use current Melbourne time
+let refreshCountdown = REFRESH_SECS;
+let refreshInterval  = null;
+let countdownInterval = null;
+let loading = false;
+
+// ── Startup ───────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  startClock();
+  applyRealtime();
+
+  if (currentStation) {
+    showStation(currentStation, null);
+    refresh();
+  } else {
+    locateUser();
+  }
+});
+
+// ── Clock ─────────────────────────────────────────────
+function startClock() {
+  function tick() {
+    const now   = new Date();
+    const hhmms = melbourneParts(now);
+    document.getElementById("clock").textContent =
+      `${hhmms.h}:${hhmms.m}:${hhmms.s}`;
+    document.getElementById("dateLine").textContent =
+      melbourneDate(now);
+    if (!customTime) {
+      document.getElementById("timeInput").value = `${hhmms.h}:${hhmms.m}`;
+    }
+  }
+  tick();
+  setInterval(tick, 1000);
+}
+
+// ── Melbourne time helpers ────────────────────────────
+function melbourneParts(date) {
+  const fmt = v => String(v).padStart(2, "0");
+  const ps = new Intl.DateTimeFormat("en-AU", {
+    timeZone: "Australia/Melbourne",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  }).formatToParts(date);
+  const get = t => ps.find(p => p.type === t).value;
+  return { h: get("hour"), m: get("minute"), s: get("second") };
+}
+
+function melbourneHHMM(offsetMinutes = 0) {
+  const d = new Date(Date.now() + offsetMinutes * 60000);
+  const p = melbourneParts(d);
+  return `${p.h}:${p.m}`;
+}
+
+function melbourneDate(date) {
+  return new Intl.DateTimeFormat("en-AU", {
+    timeZone: "Australia/Melbourne",
+    weekday: "short", day: "numeric", month: "short", year: "numeric"
+  }).format(date);
+}
+
+function melbourneDateISO(offsetMinutes = 0) {
+  const d = new Date(Date.now() + offsetMinutes * 60000);
+  return new Intl.DateTimeFormat("sv", { timeZone: "Australia/Melbourne" }).format(d);
+}
+
+function minutesUntil(hhmm) {
+  const [dh, dm] = hhmm.split(":").map(Number);
+  const p = melbourneParts(new Date());
+  let diff = (dh * 60 + dm) - (+p.h * 60 + +p.m);
+  if (diff < -12 * 60) diff += 24 * 60;
+  return diff;
+}
+
+function timeDiffMin(from, to) {
+  const [fh, fm] = from.split(":").map(Number);
+  const [th, tm] = to.split(":").map(Number);
+  let diff = th * 60 + tm - fh * 60 - fm;
+  if (diff < 0) diff += 24 * 60;
+  return diff;
+}
+
+// ── Geolocation ───────────────────────────────────────
+function locateUser() {
+  if (!navigator.geolocation) {
+    showStationPicker("Location not supported on this browser.");
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude: lat, longitude: lon, accuracy } = pos.coords;
+      const { id, distKm } = nearestStation(lat, lon);
+      currentStation = id;
+      localStorage.setItem("ptv_station", id);
+      const distText = distKm < 1
+        ? `${Math.round(distKm * 1000)} m away`
+        : `${distKm.toFixed(1)} km away`;
+      showStation(id, distText);
+      refresh();
+    },
+    err => {
+      showStationPicker("Could not get location. Choose your station:");
+    },
+    { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+  );
+}
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2
+    + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function nearestStation(lat, lon) {
+  let nearest = null, minDist = Infinity;
+  for (const [id, s] of Object.entries(STATIONS)) {
+    const d = haversineKm(lat, lon, s.lat, s.lon);
+    if (d < minDist) { minDist = d; nearest = id; }
+  }
+  return { id: nearest, distKm: minDist };
+}
+
+function showStation(stationId, distText) {
+  const s = STATIONS[stationId];
+  document.getElementById("stationName").textContent = s.name.toUpperCase();
+  document.getElementById("stationDist").textContent = distText || "";
+  document.getElementById("stationBar").style.display = "flex";
+  document.getElementById("timeControls").style.display = "block";
+
+  const isTownHall = stationId === "townhall";
+  document.getElementById("modeTabs").style.display = isTownHall ? "flex" : "none";
+  if (!isTownHall && timeMode === "arrive_by") {
+    timeMode = "depart_at";
+    document.getElementById("tabDepart").classList.add("active");
+    document.getElementById("tabArrive").classList.remove("active");
+  }
+}
+
+function showStationPicker(msg) {
+  document.getElementById("cards").innerHTML = `
+    <div class="state-card">
+      <div class="icon">📍</div>
+      <h2>Choose your station</h2>
+      <p>${msg || "Select the station you're at:"}</p>
+      <div class="station-picker">
+        ${Object.entries(STATIONS).map(([id, s]) => `
+          <button class="station-picker-btn" onclick="selectStation('${id}')">
+            ${s.name}
+          </button>`).join("")}
+      </div>
+    </div>`;
+}
+
+function selectStation(id) {
+  currentStation = id;
+  localStorage.setItem("ptv_station", id);
+  showStation(id, "manually selected");
+  refresh();
+}
+
+// ── Time controls ─────────────────────────────────────
+function setMode(mode) {
+  timeMode = mode;
+  document.getElementById("tabDepart").classList.toggle("active", mode === "depart_at");
+  document.getElementById("tabArrive").classList.toggle("active", mode === "arrive_by");
+  refresh();
+}
+
+function onTimeChange() {
+  customTime = document.getElementById("timeInput").value; // "HH:MM"
+  document.getElementById("timeInput").classList.add("custom");
+  document.getElementById("nowBtn").classList.add("active");
+  refresh();
+}
+
+function clearCustomTime() {
+  customTime = null;
+  const p = melbourneParts(new Date());
+  document.getElementById("timeInput").value = `${p.h}:${p.m}`;
+  document.getElementById("timeInput").classList.remove("custom");
+  document.getElementById("nowBtn").classList.remove("active");
+  refresh();
+}
+
+function getQueryTime() {
+  if (customTime) return customTime;
+  // +1 min buffer when using current time so we don't surface trains already leaving
+  return melbourneHHMM(timeMode === "depart_at" ? 1 : 0);
+}
+
+// ── API ───────────────────────────────────────────────
+function getApiBase() {
+  const override = localStorage.getItem("ptv_api_url");
+  return (override || HARDCODED_API).replace(/\/$/, "");
+}
+
+async function fetchJourney(params) {
+  const base = getApiBase();
+  if (!base) throw new Error("API URL not configured");
+  const qs = new URLSearchParams(params).toString();
+  const resp = await fetch(`${base}/timetable?${qs}`);
+  const json = await resp.json();
+  if (json.error) throw new Error(json.error);
+  return json;
+}
+
+// ── Refresh logic ─────────────────────────────────────
+async function refresh() {
+  if (loading || !currentStation) return;
+  loading = true;
+
+  clearInterval(refreshInterval);
+  clearInterval(countdownInterval);
+
+  const btn = document.getElementById("refreshBtn");
+  btn.classList.add("spinning");
+
+  const time     = getQueryTime();
+  const date     = melbourneDateISO();
+  const realtime = realtimeMode ? "true" : "false";
+
+  try {
+    if (currentStation === "townhall") {
+      const timeParam = timeMode === "arrive_by"
+        ? { arrive_by: time }
+        : { depart_at: time };
+      const [mentoneJ, sdpJ] = await Promise.allSettled([
+        fetchJourney({ destination: "mentone",      ...timeParam, date, realtime }),
+        fetchJourney({ destination: "sandown_park", ...timeParam, date, realtime }),
+      ]);
+      renderTownHall(
+        mentoneJ.status === "fulfilled" ? mentoneJ.value : null,
+        sdpJ.status    === "fulfilled" ? sdpJ.value    : null,
+        mentoneJ.status === "rejected"  ? mentoneJ.reason : null,
+        sdpJ.status    === "rejected"   ? sdpJ.reason   : null,
+      );
+    } else {
+      const apiFrom = currentStation === "mentone" ? "mentone" : "sandown_park";
+      const j = await fetchJourney({ from: apiFrom, depart_at: time, date, realtime });
+      renderSingle(j);
+    }
+  } catch(e) {
+    renderError(e.message);
+  }
+
+  btn.classList.remove("spinning");
+  loading = false;
+  startCountdown();
+}
+
+// ── Renderers ─────────────────────────────────────────
+function renderSingle(j) {
+  document.getElementById("cards").innerHTML = journeyCard(j);
+}
+
+function renderTownHall(mentone, sdp, mentoneErr, sdpErr) {
+  const a = mentone ? journeyCard(mentone) : errorCard("Mentone", mentoneErr);
+  const b = sdp     ? journeyCard(sdp)     : errorCard("Sandown Park", sdpErr);
+  document.getElementById("cards").innerHTML = a + b;
+}
+
+function renderError(msg) {
+  document.getElementById("cards").innerHTML = `
+    <div class="state-card">
+      <div class="icon">⚠️</div>
+      <h2>Could not load</h2>
+      <p>${escHtml(msg)}</p>
+    </div>`;
+}
+
+function journeyCard(j) {
+  if (!j) return "";
+  const diff   = minutesUntil(j.depart_at);
+  const travel = timeDiffMin(j.depart_at, j.arrive_at);
+
+  let urgencyClass, urgencyText;
+  if (diff <= 0)      { urgencyClass = "gone";   urgencyText = "Departed"; }
+  else if (diff <= 2) { urgencyClass = "urgent";  urgencyText = `${diff} min — hurry!`; }
+  else if (diff <= 6) { urgencyClass = "soon";    urgencyText = `${diff} min`; }
+  else                { urgencyClass = "ok";      urgencyText = `${diff} min`; }
+
+  const transferHtml = j.transfer ? `
+    <div class="transfer">
+      <div class="transfer-title">Transfer · ${escHtml(j.transfer.station)}</div>
+      <div class="transfer-row">
+        <span class="transfer-label">Arrive</span>
+        <span class="transfer-value">${j.transfer.arrive_caulfield}</span>
+      </div>
+      <div class="transfer-row">
+        <span class="transfer-label">Depart</span>
+        <span class="transfer-value">${j.transfer.depart_caulfield}</span>
+      </div>
+      <div class="transfer-line">${escHtml(j.transfer.line)} line</div>
+    </div>` : "";
+
+  const disruptionHtml = (j.disruptions || []).map(d => `
+    <div class="disruption">
+      <span class="disruption-icon">⚠</span>
+      <span>${escHtml(d.title || d.description || "Service disruption")}</span>
+    </div>`).join("");
+
+  return `
+    <div class="card">
+      <div class="card-dest">→ ${escHtml(j.destination).toUpperCase()}</div>
+      <div class="timing">
+        <div class="timing-col">
+          <div class="timing-label">Departs</div>
+          <div class="timing-time">${j.depart_at}</div>
+          <div class="urgency ${urgencyClass}">${urgencyText}</div>
+        </div>
+        <div class="timing-col">
+          <div class="timing-label">Arrives</div>
+          <div class="timing-time">${j.arrive_at}</div>
+          <div class="travel-min">${travel} min travel</div>
+        </div>
+      </div>
+      ${transferHtml}
+      ${disruptionHtml}
+    </div>`;
+}
+
+function errorCard(dest, err) {
+  return `
+    <div class="card">
+      <div class="card-dest">→ ${dest.toUpperCase()}</div>
+      <p style="color:var(--muted);font-size:0.82rem">${escHtml(String(err?.message || "No trains found"))}</p>
+    </div>`;
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+}
+
+// ── Countdown ─────────────────────────────────────────
+function startCountdown() {
+  refreshCountdown = REFRESH_SECS;
+  updateCountdownUI();
+  countdownInterval = setInterval(() => {
+    refreshCountdown--;
+    updateCountdownUI();
+    if (refreshCountdown <= 0) {
+      clearInterval(countdownInterval);
+      refresh();
+    }
+  }, 1000);
+}
+
+function updateCountdownUI() {
+  const pct = (refreshCountdown / REFRESH_SECS) * 100;
+  document.getElementById("refreshProgress").style.width = pct + "%";
+  document.getElementById("refreshLabel").textContent =
+    refreshCountdown > 0 ? `${refreshCountdown}s` : "Refreshing…";
+}
+
+// ── Settings ─────────────────────────────────────────
+function openSettings() {
+  document.getElementById("apiUrlInput").value = localStorage.getItem("ptv_api_url") || HARDCODED_API;
+  document.getElementById("realtimeToggle").checked = realtimeMode;
+  document.getElementById("overlay").classList.add("open");
+}
+
+function closeSettings() {
+  document.getElementById("overlay").classList.remove("open");
+}
+
+function saveSettings() {
+  const url = document.getElementById("apiUrlInput").value.trim().replace(/\/$/, "");
+  if (url) {
+    localStorage.setItem("ptv_api_url", url);
+    const btn = document.getElementById("saveBtn");
+    btn.textContent = "Saved ✓";
+    btn.style.background = "#16a34a";
+    setTimeout(() => { btn.textContent = "Save"; btn.style.background = ""; }, 1500);
+  }
+  closeSettings();
+  if (url) refresh();
+}
+
+function toggleRealtime(on) {
+  realtimeMode = on;
+  localStorage.setItem("ptv_realtime", on ? "true" : "false");
+  applyRealtime();
+}
+
+function applyRealtime() {
+  const btn = document.getElementById("realtimeBtn");
+  btn.title = realtimeMode ? "Realtime ON" : "Realtime OFF";
+  btn.classList.toggle("active", realtimeMode);
+  document.getElementById("realtimeToggle").checked = realtimeMode;
+}
+
+document.getElementById("realtimeBtn").addEventListener("click", () => {
+  toggleRealtime(!realtimeMode);
+  refresh();
+});
+
+// ── History view ─────────────────────────────────────
+let currentView = "live";
+let historyChart = null;
+
+function switchView(view) {
+  currentView = view;
+  document.getElementById("navLive").classList.toggle("active", view === "live");
+  document.getElementById("navHistory").classList.toggle("active", view === "history");
+  document.body.classList.toggle("view-history", view === "history");
+
+  if (view === "history") {
+    const dateInput = document.getElementById("historyDate");
+    if (!dateInput.value) dateInput.value = melbourneDateISO();
+    loadHistory();
+  }
+}
+
+async function loadHistory() {
+  const route = document.getElementById("historyRoute").value;
+  const date  = document.getElementById("historyDate").value;
+  if (!date) return;
+
+  const base = getApiBase();
+  document.getElementById("historyContent").innerHTML =
+    '<div style="display:flex;justify-content:center;padding:40px"><div class="spinner"></div></div>';
+
+  try {
+    const resp = await fetch(`${base}/history?route=${encodeURIComponent(route)}&date=${encodeURIComponent(date)}`);
+    const data = await resp.json();
+    renderHistory(data);
+  } catch(e) {
+    document.getElementById("historyContent").innerHTML =
+      `<div class="state-card"><div class="icon">⚠️</div><h2>Failed to load</h2><p>${escHtml(e.message)}</p></div>`;
+  }
+}
+
+function renderHistory(data) {
+  const trains = data.trains || [];
+  const content = document.getElementById("historyContent");
+
+  if (trains.length === 0) {
+    if (historyChart) { historyChart.destroy(); historyChart = null; }
+    content.innerHTML = `
+      <div class="state-card">
+        <div class="icon">📭</div>
+        <h2>No data</h2>
+        <p>No recorded trains for this route and date.<br>Data is collected every 3 min during operating hours.</p>
+      </div>`;
+    return;
+  }
+
+  const delays  = trains.map(t => t.delay_min);
+  const avg     = Math.round(delays.reduce((a, b) => a + b, 0) / delays.length * 10) / 10;
+  const onTime  = trains.filter(t => t.delay_min <= 2).length;
+  const pct     = Math.round(onTime / trains.length * 100);
+  const maxDel  = Math.max(...delays);
+
+  const avgClass = avg > 5 ? "red" : avg > 2 ? "orange" : "green";
+  const pctClass = pct >= 80 ? "green" : pct >= 60 ? "orange" : "red";
+
+  const rows = trains.map(t => {
+    const dc = t.delay_min <= 2 ? "delay-ok" : t.delay_min <= 5 ? "delay-warn" : "delay-bad";
+    const travelCell = t.travel_min_actual != null
+      ? `${t.travel_min_actual}m <small style="color:var(--muted)">(sch ${t.travel_min_scheduled}m)</small>`
+      : `${t.travel_min_scheduled}m`;
+    return `<tr>
+      <td>${t.depart_scheduled}</td>
+      <td>${t.depart_actual || "–"}</td>
+      <td class="${dc}">${t.delay_min >= 0 ? "+" : ""}${t.delay_min}m</td>
+      <td>${travelCell}</td>
+    </tr>`;
+  }).join("");
+
+  content.innerHTML = `
+    <div class="history-stats">
+      <div class="hist-stat">
+        <div class="hist-stat-val">${trains.length}</div>
+        <div class="hist-stat-label">Trains</div>
+      </div>
+      <div class="hist-stat">
+        <div class="hist-stat-val ${avgClass}">${avg >= 0 ? "+" : ""}${avg}m</div>
+        <div class="hist-stat-label">Avg Delay</div>
+      </div>
+      <div class="hist-stat">
+        <div class="hist-stat-val ${pctClass}">${pct}%</div>
+        <div class="hist-stat-label">On Time</div>
+      </div>
+      <div class="hist-stat">
+        <div class="hist-stat-val ${maxDel > 10 ? "red" : maxDel > 5 ? "orange" : "green"}">${maxDel >= 0 ? "+" : ""}${maxDel}m</div>
+        <div class="hist-stat-label">Worst</div>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="historyChart" height="160"></canvas>
+    </div>
+    <div class="history-table-wrap">
+      <table class="history-table">
+        <thead><tr><th>Sched</th><th>Actual</th><th>Delay</th><th>Travel</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  renderDelayChart(trains);
+}
+
+function renderDelayChart(trains) {
+  const labels = trains.map(t => t.depart_scheduled);
+  const delays = trains.map(t => t.delay_min);
+  const colors = delays.map(d => d <= 2 ? "#4ade80" : d <= 5 ? "#fb923c" : "#f87171");
+
+  const ctx = document.getElementById("historyChart").getContext("2d");
+  if (historyChart) historyChart.destroy();
+
+  Chart.defaults.color = "#64748b";
+
+  historyChart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: "Delay (min)",
+        data: delays,
+        backgroundColor: colors,
+        borderColor: colors,
+        borderRadius: 4,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => `Sched: ${trains[items[0].dataIndex].depart_scheduled}`,
+            label: (item) => {
+              const t = trains[item.dataIndex];
+              const lines = [`Delay: ${t.delay_min >= 0 ? "+" : ""}${t.delay_min} min`];
+              if (t.depart_actual) lines.push(`Actual: ${t.depart_actual}`);
+              if (t.travel_min_actual != null) lines.push(`Travel: ${t.travel_min_actual} min (sch ${t.travel_min_scheduled})`);
+              return lines;
+            }
+          },
+          backgroundColor: "#1a1f2e",
+          borderColor: "#2d3748",
+          borderWidth: 1,
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: "rgba(45,55,72,0.6)" },
+          ticks: { maxRotation: 45, font: { size: 10 } },
+        },
+        y: {
+          grid: { color: "rgba(45,55,72,0.6)" },
+          ticks: { font: { size: 10 } },
+          title: { display: true, text: "Delay (min)", font: { size: 10 } },
+        }
+      }
+    }
+  });
+}
+
+// ── Service worker ────────────────────────────────────
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+</script>
+</body>
+</html>

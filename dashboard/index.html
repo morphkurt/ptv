@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PTV Commute Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #f8fafc;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-bottom: 24px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 28px;
+    }
+    .controls label { font-size: 0.85rem; color: #94a3b8; }
+    .controls select, .controls input {
+      background: #1e2333;
+      border: 1px solid #2d3748;
+      color: #e2e8f0;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 0.85rem;
+    }
+    .controls button {
+      background: #3b82f6;
+      border: none;
+      color: #fff;
+      border-radius: 6px;
+      padding: 7px 18px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .controls button:hover { background: #2563eb; }
+    .controls button:disabled { background: #334155; cursor: default; }
+
+    .route-tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    .route-tab {
+      background: #1e2333;
+      border: 1px solid #2d3748;
+      color: #94a3b8;
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .route-tab.active {
+      background: #3b82f6;
+      border-color: #3b82f6;
+      color: #fff;
+    }
+
+    .legend {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+      font-size: 0.78rem;
+      color: #94a3b8;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .windows {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 760px) { .windows { grid-template-columns: 1fr; } }
+
+    .window-card {
+      background: #1a1f2e;
+      border: 1px solid #2d3748;
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .window-title {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin-bottom: 4px;
+    }
+    .window-subtitle {
+      font-size: 0.75rem;
+      color: #475569;
+      margin-bottom: 16px;
+    }
+    .chart-wrap { position: relative; height: 280px; }
+
+    .trains-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin-top: 16px;
+    }
+    .trains-table th {
+      text-align: left;
+      padding: 5px 8px;
+      color: #64748b;
+      font-weight: 500;
+      border-bottom: 1px solid #2d3748;
+    }
+    .trains-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #1e2333;
+      color: #cbd5e1;
+    }
+    .trains-table tr:last-child td { border-bottom: none; }
+    .delay-none  { color: #4ade80; }
+    .delay-low   { color: #fb923c; }
+    .delay-high  { color: #f87171; }
+    .no-est      { color: #475569; font-style: italic; }
+
+    .status {
+      text-align: center;
+      padding: 60px 0;
+      color: #475569;
+      font-size: 0.9rem;
+    }
+    .status.error { color: #f87171; }
+  </style>
+</head>
+<body>
+
+<h1>PTV Commute Dashboard</h1>
+<p class="subtitle">Scheduled &amp; estimated travel times across morning and evening windows</p>
+
+<div class="controls">
+  <label for="dateInput">Date</label>
+  <input type="date" id="dateInput">
+
+  <label for="apiUrl">API base URL</label>
+  <input type="text" id="apiUrl" placeholder="https://xxxx.execute-api.ap-southeast-2.amazonaws.com" style="width:360px">
+
+  <button id="loadBtn" onclick="loadAll()">Load</button>
+</div>
+
+<div class="route-tabs">
+  <span class="route-tab active" data-route="sandown_park_inbound"  onclick="switchRoute(this)">Sandown Park → Town Hall</span>
+  <span class="route-tab"        data-route="sandown_park_outbound" onclick="switchRoute(this)">Town Hall → Sandown Park</span>
+  <span class="route-tab"        data-route="mentone_inbound"       onclick="switchRoute(this)">Mentone → Town Hall</span>
+  <span class="route-tab"        data-route="mentone_outbound"      onclick="switchRoute(this)">Town Hall → Mentone</span>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#60a5fa"></div>Scheduled</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#4ade80"></div>On time / early (est)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div>1–3 min delay (est)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f87171"></div>&gt;3 min delay (est)</div>
+</div>
+
+<div id="content"><p class="status">Enter an API URL and click Load.</p></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const cache = {};           // route → data
+let   activeRoute = "sandown_park_inbound";
+const charts = {};          // "morning" | "evening" → Chart instance
+
+// ── Init ───────────────────────────────────────────────────────────────────
+(function init() {
+  const today = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  document.getElementById("dateInput").value =
+    `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+
+  const saved = localStorage.getItem("ptv_api_url");
+  if (saved) document.getElementById("apiUrl").value = saved;
+})();
+
+// ── Route switching ────────────────────────────────────────────────────────
+function switchRoute(el) {
+  document.querySelectorAll(".route-tab").forEach(t => t.classList.remove("active"));
+  el.classList.add("active");
+  activeRoute = el.dataset.route;
+  if (cache[activeRoute]) {
+    render(cache[activeRoute]);
+  } else {
+    loadRoute(activeRoute);
+  }
+}
+
+// ── Load all routes in parallel ────────────────────────────────────────────
+async function loadAll() {
+  const apiUrl = document.getElementById("apiUrl").value.trim().replace(/\/$/, "");
+  if (!apiUrl) { alert("Please enter the API base URL."); return; }
+  localStorage.setItem("ptv_api_url", apiUrl);
+
+  const date = document.getElementById("dateInput").value;
+  document.getElementById("loadBtn").disabled = true;
+  document.getElementById("content").innerHTML = `<p class="status">Loading…</p>`;
+
+  const routes = ["sandown_park_inbound","sandown_park_outbound","mentone_inbound","mentone_outbound"];
+  await Promise.all(routes.map(r => fetchRoute(apiUrl, date, r)));
+
+  document.getElementById("loadBtn").disabled = false;
+  if (cache[activeRoute]) render(cache[activeRoute]);
+  else document.getElementById("content").innerHTML =
+    `<p class="status error">No data for this route.</p>`;
+}
+
+async function loadRoute(route) {
+  const apiUrl = document.getElementById("apiUrl").value.trim().replace(/\/$/, "");
+  const date   = document.getElementById("dateInput").value;
+  if (!apiUrl) return;
+  await fetchRoute(apiUrl, date, route);
+  if (cache[activeRoute]) render(cache[activeRoute]);
+}
+
+async function fetchRoute(apiUrl, date, route) {
+  try {
+    const url = `${apiUrl}/travel-times?route=${route}${date ? "&date="+date : ""}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    cache[route] = await resp.json();
+  } catch(e) {
+    console.error(route, e);
+  }
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render(data) {
+  const content = document.getElementById("content");
+  content.innerHTML = `
+    <div class="windows">
+      <div class="window-card" id="morningCard"></div>
+      <div class="window-card" id="eveningCard"></div>
+    </div>`;
+
+  renderWindow("morningCard", "Morning", data.morning, "morning");
+  renderWindow("eveningCard", "Evening", data.evening, "evening");
+}
+
+function renderWindow(cardId, label, win, key) {
+  const card = document.getElementById(cardId);
+  const from = document.getElementById("dateInput").value;
+
+  card.innerHTML = `
+    <div class="window-title">${label} window</div>
+    <div class="window-subtitle">${win.from} – ${win.to}${from ? "  ·  " + from : ""}</div>
+    <div class="window-subtitle">${win.from_stop || ""} → ${win.to_stop || ""}</div>
+    <div class="chart-wrap"><canvas id="chart-${key}"></canvas></div>
+    ${tableHtml(win.trains)}`;
+
+  buildChart(key, win.trains);
+}
+
+function tableHtml(trains) {
+  if (!trains || trains.length === 0)
+    return `<p style="color:#475569;font-size:0.8rem;margin-top:12px">No trains in window.</p>`;
+
+  const rows = trains.map(t => {
+    const delayClass = t.delay_min > 3 ? "delay-high" : t.delay_min > 0 ? "delay-low" : "delay-none";
+    const estMin  = t.travel_min_estimated != null
+      ? `<span class="${delayClass}">${t.travel_min_estimated} min</span>`
+      : `<span class="no-est">—</span>`;
+    const delay   = t.delay_min
+      ? `<span class="${delayClass}">+${t.delay_min}m</span>`
+      : `<span class="delay-none">on time</span>`;
+
+    return `<tr>
+      <td>${t.depart_scheduled}${t.depart_estimated && t.depart_estimated !== t.depart_scheduled ? `<br><small style="color:#94a3b8">${t.depart_estimated}</small>` : ""}</td>
+      <td>${t.arrive_scheduled}${t.arrive_estimated && t.arrive_estimated !== t.arrive_scheduled ? `<br><small style="color:#94a3b8">${t.arrive_estimated}</small>` : ""}</td>
+      <td>${t.travel_min_scheduled} min</td>
+      <td>${estMin}</td>
+      <td>${t.delay_min != null && t.travel_min_estimated != null ? delay : '<span class="no-est">—</span>'}</td>
+    </tr>`;
+  }).join("");
+
+  return `<table class="trains-table">
+    <thead><tr>
+      <th>Depart</th><th>Arrive</th>
+      <th>Sched</th><th>Est</th><th>Delay</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+// ── Chart.js ───────────────────────────────────────────────────────────────
+function timeToMinutes(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function pointColour(delay) {
+  if (delay == null) return "#60a5fa";      // scheduled only
+  if (delay <= 0)    return "#4ade80";      // on time / early
+  if (delay <= 3)    return "#fb923c";      // 1-3 min
+  return "#f87171";                         // >3 min
+}
+
+function buildChart(key, trains) {
+  if (charts[key]) { charts[key].destroy(); delete charts[key]; }
+  if (!trains || trains.length === 0) return;
+
+  const schedPts = trains.map(t => ({
+    x: timeToMinutes(t.depart_scheduled),
+    y: t.travel_min_scheduled,
+    label: `${t.depart_scheduled} → ${t.arrive_scheduled} (${t.travel_min_scheduled} min sched)`,
+  }));
+
+  const estPts = trains
+    .filter(t => t.travel_min_estimated != null)
+    .map(t => ({
+      x: timeToMinutes(t.depart_estimated || t.depart_scheduled),
+      y: t.travel_min_estimated,
+      delay: t.delay_min,
+      label: `${t.depart_estimated || t.depart_scheduled} → ${t.arrive_estimated} (${t.travel_min_estimated} min est, delay ${t.delay_min}m)`,
+    }));
+
+  const ctx = document.getElementById(`chart-${key}`).getContext("2d");
+  charts[key] = new Chart(ctx, {
+    type: "scatter",
+    data: {
+      datasets: [
+        {
+          label: "Scheduled",
+          data: schedPts,
+          backgroundColor: "#60a5fa",
+          pointRadius: 6,
+          pointHoverRadius: 8,
+        },
+        {
+          label: "Estimated",
+          data: estPts,
+          backgroundColor: estPts.map(p => pointColour(p.delay)),
+          pointRadius: 6,
+          pointHoverRadius: 8,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.raw.label || "",
+          },
+        },
+      },
+      scales: {
+        x: {
+          title: { display: true, text: "Departure time", color: "#64748b" },
+          ticks: {
+            color: "#64748b",
+            callback: v => `${Math.floor(v/60)}:${String(v%60).padStart(2,"0")}`,
+            stepSize: 15,
+          },
+          grid: { color: "#1e2333" },
+        },
+        y: {
+          title: { display: true, text: "Travel time (min)", color: "#64748b" },
+          ticks: { color: "#64748b" },
+          grid: { color: "#1e2333" },
+        },
+      },
+    },
+  });
+}
+</script>
+</body>
+</html>
