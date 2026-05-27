@@ -1211,12 +1211,15 @@ function renderHistory(data) {
     const arrActualClass = !t.arrive_actual ? "" :
       t.arrive_actual <= t.arrive_scheduled ? "delay-ok" :
       timeDiffMin(t.arrive_scheduled, t.arrive_actual) <= 5 ? "delay-warn" : "delay-bad";
+    const arrActualCell = t.arrive_actual
+      ? `<span class="${arrActualClass}">${t.arrive_actual}</span>`
+      : `<span style="color:var(--muted)">${t.arrive_scheduled || "–"}</span>`;
     return `<tr>
       <td>${t.depart_scheduled}</td>
       <td>${t.depart_actual || "–"}</td>
       <td class="${dc}">${t.delay_min >= 0 ? "+" : ""}${t.delay_min}m</td>
       <td>${t.arrive_scheduled || "–"}</td>
-      <td class="${arrActualClass}">${t.arrive_actual || "–"}</td>
+      <td>${arrActualCell}</td>
     </tr>`;
   }).join("");
 
