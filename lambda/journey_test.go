@@ -20,26 +20,31 @@ func client() *PTVClient {
 
 func TestSandownPark(t *testing.T) {
 	c := client()
-	result, err := PlanJourney(c, "sandown_park", "17:45", "2026-05-28", false)
+	results, err := PlanJourney(c, "sandown_park", "17:45", "2026-05-28", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Printf("Sandown Park result: depart Town Hall %s, arrive %s\n",
-		result.DepartAt, result.ArriveAt)
+	for i, r := range results {
+		fmt.Printf("Sandown Park option %d: depart Town Hall %s, arrive %s\n", i+1, r.DepartAt, r.ArriveAt)
+	}
 }
 
 func TestMentone(t *testing.T) {
 	c := client()
-	result, err := PlanJourney(c, "mentone", "17:30", "2026-05-28", false)
+	results, err := PlanJourney(c, "mentone", "17:30", "2026-05-28", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	fmt.Printf("Mentone result: depart Town Hall %s, transfer at %s (arrive %s, depart %s on %s), arrive Mentone %s\n",
-		result.DepartAt,
-		result.Transfer.Station,
-		result.Transfer.ArriveCaulfield,
-		result.Transfer.DepartCaulfield,
-		result.Transfer.Line,
-		result.ArriveAt,
-	)
+	for i, r := range results {
+		fmt.Printf("Mentone option %d: depart Town Hall %s, transfer at %s (arrive %s, depart %s on %s), arrive Mentone %s, express=%v\n",
+			i+1,
+			r.DepartAt,
+			r.Transfer.Station,
+			r.Transfer.ArriveCaulfield,
+			r.Transfer.DepartCaulfield,
+			r.Transfer.Line,
+			r.ArriveAt,
+			r.Express,
+		)
+	}
 }

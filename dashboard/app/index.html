@@ -256,6 +256,52 @@
       vertical-align: middle;
     }
 
+    /* ── Alternative options ────────────────────────── */
+    .alt-options {
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .alt-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+    }
+
+    .alt-depart {
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      min-width: 40px;
+    }
+    .alt-depart.ok     { color: var(--green); }
+    .alt-depart.soon   { color: var(--orange); }
+    .alt-depart.urgent { color: var(--red); }
+    .alt-depart.gone   { color: var(--muted); }
+
+    .alt-arrive {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .alt-min {
+      margin-left: auto;
+      color: var(--muted);
+      font-size: 0.72rem;
+      white-space: nowrap;
+    }
+
+    .alt-save {
+      color: var(--green);
+      font-size: 0.72rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
     /* Disruptions */
     .disruption {
       margin-top: 12px;
@@ -963,9 +1009,9 @@ async function fetchJourney(params) {
   if (!base) throw new Error("API URL not configured");
   const qs = new URLSearchParams(params).toString();
   const resp = await fetch(`${base}/timetable?${qs}`);
-  const json = await resp.json();
-  if (json.error) throw new Error(json.error);
-  return json;
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data; // array of JourneyResult
 }
 
 // ── Refresh logic ─────────────────────────────────────
@@ -1013,8 +1059,8 @@ async function refresh() {
 }
 
 // ── Renderers ─────────────────────────────────────────
-function renderSingle(j) {
-  document.getElementById("cards").innerHTML = journeyCard(j);
+function renderSingle(journeys) {
+  document.getElementById("cards").innerHTML = journeyCard(journeys);
 }
 
 function renderTownHall(mentone, sdp, mentoneErr, sdpErr) {
@@ -1032,8 +1078,11 @@ function renderError(msg) {
     </div>`;
 }
 
-function journeyCard(j) {
-  if (!j) return "";
+function journeyCard(journeys) {
+  if (!journeys || journeys.length === 0) return "";
+  const j = journeys[0];
+  const alternatives = journeys.slice(1);
+
   const diff   = minutesUntil(j.depart_at);
   const travel = timeDiffMin(j.depart_at, j.arrive_at);
 
@@ -1063,6 +1112,26 @@ function journeyCard(j) {
       <span>${escHtml(d.title || d.description || "Service disruption")}</span>
     </div>`).join("");
 
+  // Alternatives: compact rows showing depart → arrive with express badge and benefit.
+  const altHtml = alternatives.length > 0 ? `
+    <div class="alt-options">
+      ${alternatives.map(alt => {
+        const altDiff   = minutesUntil(alt.depart_at);
+        const altClass  = altDiff <= 0 ? "gone" : altDiff <= 2 ? "urgent" : altDiff <= 6 ? "soon" : "ok";
+        const altTravel = timeDiffMin(alt.depart_at, alt.arrive_at);
+        const saving    = travel - altTravel;
+        const saveHtml  = saving > 0 ? `<span class="alt-save">saves ${saving}min</span>` : "";
+        const minLabel  = altDiff > 0 ? `${altDiff}min` : "now";
+        return `<div class="alt-option">
+          <span class="alt-depart ${altClass}">${alt.depart_at}</span>
+          ${alt.express ? '<span class="express-badge">Express</span>' : ''}
+          <span class="alt-arrive">→ ${alt.arrive_at}</span>
+          ${saveHtml}
+          <span class="alt-min">${minLabel}</span>
+        </div>`;
+      }).join("")}
+    </div>` : "";
+
   return `
     <div class="card">
       <div class="card-dest">→ ${escHtml(j.destination).toUpperCase()}${j.express ? '<span class="express-badge">Express</span>' : ''}</div>
@@ -1079,6 +1148,7 @@ function journeyCard(j) {
         </div>
       </div>
       ${transferHtml}
+      ${altHtml}
       ${disruptionHtml}
     </div>`;
 }

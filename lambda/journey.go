@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"sort"
+	"sync"
 	"time"
 )
 
@@ -26,6 +28,13 @@ const (
 	dirCranbourne = 3
 	dirPakenham   = 10
 	dirFrankston  = 5
+)
+
+// Intermediate stop counts for a stopping-all-stations Frankston service.
+// Express services have fewer stops than these thresholds.
+const (
+	frankInboundFullStops  = 9 // Mentone→Caulfield (city direction)
+	frankOutboundFullStops = 5 // Caulfield→Mentone (Frankston direction)
 )
 
 var melbourneTZ = mustLoadLocation("Australia/Melbourne")
@@ -56,11 +65,10 @@ type Transfer struct {
 	DepartCaulfield string `json:"depart_caulfield"`
 }
 
-// PlanJourney finds the latest Town Hall departure for the given destination and arrival deadline.
+// PlanJourney finds up to 3 latest Town Hall departures for the given destination arriving by arriveBy.
 // arriveBy is in Melbourne local time, format "15:04".
 // date is optional (format "2006-01-02"); defaults to today in Melbourne time if empty.
-// realtime uses estimated departure times from the API where available.
-func PlanJourney(client *PTVClient, destination, arriveByStr, date string, realtime bool) (*JourneyResult, error) {
+func PlanJourney(client *PTVClient, destination, arriveByStr, date string, realtime bool) ([]JourneyResult, error) {
 	var base time.Time
 	if date == "" {
 		base = time.Now().In(melbourneTZ)
@@ -78,7 +86,6 @@ func PlanJourney(client *PTVClient, destination, arriveByStr, date string, realt
 	arriveBy = time.Date(base.Year(), base.Month(), base.Day(),
 		arriveBy.Hour(), arriveBy.Minute(), 0, 0, melbourneTZ)
 
-	// Query window: start 2 hours before the deadline so we see enough candidate trains
 	windowStart := arriveBy.Add(-2 * time.Hour)
 
 	switch destination {
@@ -91,163 +98,278 @@ func PlanJourney(client *PTVClient, destination, arriveByStr, date string, realt
 	}
 }
 
-// planSandownPark finds the latest direct Cranbourne/Pakenham train from Town Hall
-// that arrives at Sandown Park by arriveBy.
-func planSandownPark(client *PTVClient, arriveBy, windowStart time.Time, realtime bool) (*JourneyResult, error) {
-	candidates := []struct{ route, dir int }{
-		{routeCranbourne, dirCranbourne},
-		{routePakenham, dirPakenham},
-	}
-
-	type hit struct {
-		departTH time.Time
-		arriveSD time.Time
-	}
-	var best *hit
-
-	for _, c := range candidates {
-		deps, err := client.GetDepartures(stopTownHall, c.route, c.dir, 15, windowStart)
+// planSandownPark finds up to 3 latest direct C/P trains from Town Hall arriving at Sandown Park by arriveBy.
+func planSandownPark(client *PTVClient, arriveBy, windowStart time.Time, realtime bool) ([]JourneyResult, error) {
+	var allDeps []Departure
+	seen := map[string]bool{}
+	for _, c := range []struct{ route, dir int }{{routeCranbourne, dirCranbourne}, {routePakenham, dirPakenham}} {
+		deps, err := client.GetDepartures(stopTownHall, c.route, c.dir, 20, windowStart)
 		if err != nil {
 			return nil, fmt.Errorf("departures from Town Hall: %w", err)
 		}
-		for _, dep := range deps {
-			departTH, err := parseUTC(dep.EffectiveTime(realtime))
-			if err != nil {
-				continue
-			}
-			departTH = rebaseToDate(departTH, arriveBy)
-			if departTH.After(arriveBy) {
-				continue
-			}
-			arriveSD, err := findStopTimeInPattern(client, dep.RunRef, stopSandownPark, arriveBy, realtime)
-			if err != nil || arriveSD.IsZero() {
-				continue
-			}
-			if arriveSD.After(arriveBy) {
-				continue
-			}
-			if best == nil || departTH.After(best.departTH) {
-				best = &hit{departTH: departTH, arriveSD: arriveSD}
+		for _, d := range deps {
+			if !seen[d.RunRef] {
+				seen[d.RunRef] = true
+				allDeps = append(allDeps, d)
 			}
 		}
 	}
 
-	if best == nil {
-		return nil, fmt.Errorf("no train found from Town Hall to Sandown Park arriving by %s", arriveBy.Format("15:04"))
+	type candidate struct {
+		dep      Departure
+		departTH time.Time
+	}
+	var candidates []candidate
+	for _, dep := range allDeps {
+		t, err := parseUTC(dep.EffectiveTime(realtime))
+		if err != nil {
+			continue
+		}
+		t = rebaseToDate(t, arriveBy)
+		if t.After(arriveBy) {
+			continue
+		}
+		candidates = append(candidates, candidate{dep, t})
 	}
 
-	return &JourneyResult{
-		Origin:      "Town Hall",
-		Destination: "Sandown Park",
-		DepartAt:    best.departTH.In(melbourneTZ).Format("15:04"),
-		ArriveAt:    best.arriveSD.In(melbourneTZ).Format("15:04"),
-		Disruptions: activeDisruptions(client, arriveBy, routeCranbourne, routePakenham),
-	}, nil
+	// Parallel-fetch Sandown Park arrival for all candidates.
+	arrivals := make([]time.Time, len(candidates))
+	var wg sync.WaitGroup
+	for i, c := range candidates {
+		wg.Add(1)
+		go func(i int, runRef string) {
+			defer wg.Done()
+			t, _ := findStopTimeInPattern(client, runRef, stopSandownPark, arriveBy, realtime)
+			arrivals[i] = t
+		}(i, c.dep.RunRef)
+	}
+	wg.Wait()
+
+	type hit struct{ departTH, arriveSD time.Time }
+	var hits []hit
+	for i, c := range candidates {
+		if arrivals[i].IsZero() || arrivals[i].After(arriveBy) {
+			continue
+		}
+		hits = append(hits, hit{c.departTH, arrivals[i]})
+	}
+
+	if len(hits) == 0 {
+		return nil, fmt.Errorf("no train from Town Hall to Sandown Park arriving by %s", arriveBy.Format("15:04"))
+	}
+
+	sort.Slice(hits, func(i, j int) bool { return hits[i].departTH.After(hits[j].departTH) })
+	if len(hits) > 3 {
+		hits = hits[:3]
+	}
+
+	disruptions := activeDisruptions(client, arriveBy, routeCranbourne, routePakenham)
+	results := make([]JourneyResult, len(hits))
+	for i, h := range hits {
+		results[i] = JourneyResult{
+			Origin:      "Town Hall",
+			Destination: "Sandown Park",
+			DepartAt:    h.departTH.In(melbourneTZ).Format("15:04"),
+			ArriveAt:    h.arriveSD.In(melbourneTZ).Format("15:04"),
+		}
+	}
+	results[0].Disruptions = disruptions
+	return results, nil
 }
 
-// planMentone finds the latest Town Hall departure for the two-leg journey:
-// Town Hall → Caulfield (Cranbourne/Pakenham), then Caulfield → Mentone (Frankston).
-func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bool) (*JourneyResult, error) {
-	// Leg 2: find the latest Frankston departure from Caulfield arriving at Mentone by arriveBy
-	frankDeps, err := client.GetDepartures(stopCaulfield, routeFrankston, dirFrankston, 15, windowStart)
+// frankPattern holds information extracted from a single GetPattern call for a Frankston train.
+type frankPattern struct {
+	arrivalAt time.Time
+	express   bool
+}
+
+// fetchFrankPatterns fetches patterns for a list of Frankston departures in parallel.
+// fromStop/toStop are the segment endpoints for the express check;
+// targetStop is the stop whose arrival time is returned.
+// fullStops is the intermediate-stop count for a stopping-all-stations service.
+func fetchFrankPatterns(client *PTVClient, deps []Departure, fromStop, toStop, targetStop, fullStops int, refDate time.Time, realtime bool) []frankPattern {
+	results := make([]frankPattern, len(deps))
+	var wg sync.WaitGroup
+	for i, dep := range deps {
+		wg.Add(1)
+		go func(i int, runRef string) {
+			defer wg.Done()
+			stops, err := client.GetPattern(runRef)
+			if err != nil {
+				return
+			}
+			fromIdx := -1
+			for k, s := range stops {
+				if s.StopID == fromStop && fromIdx < 0 {
+					fromIdx = k
+				}
+				if s.StopID == toStop && fromIdx >= 0 {
+					results[i].express = k-fromIdx-1 < fullStops
+				}
+				if s.StopID == targetStop {
+					t, err := parseUTC(s.EffectiveTime(realtime))
+					if err == nil {
+						results[i].arrivalAt = rebaseToDate(t, refDate)
+					}
+				}
+			}
+		}(i, dep.RunRef)
+	}
+	wg.Wait()
+	return results
+}
+
+// fetchStopTimes fetches the arrival time at targetStop for a list of departures in parallel.
+func fetchStopTimes(client *PTVClient, deps []Departure, targetStop int, refDate time.Time, realtime bool) []time.Time {
+	results := make([]time.Time, len(deps))
+	var wg sync.WaitGroup
+	for i, dep := range deps {
+		wg.Add(1)
+		go func(i int, runRef string) {
+			defer wg.Done()
+			t, _ := findStopTimeInPattern(client, runRef, targetStop, refDate, realtime)
+			results[i] = t
+		}(i, dep.RunRef)
+	}
+	wg.Wait()
+	return results
+}
+
+// planMentone finds up to 3 latest TH→Mentone journeys arriving by arriveBy.
+// Each option has a different Frankston connection at Caulfield.
+func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bool) ([]JourneyResult, error) {
+	// Leg 2: Frankston from Caulfield → Mentone.
+	frankDeps, err := client.GetDepartures(stopCaulfield, routeFrankston, dirFrankston, 20, windowStart)
 	if err != nil {
 		return nil, fmt.Errorf("departures from Caulfield (Frankston): %w", err)
 	}
 
-	type leg2Hit struct {
-		departCaulfield time.Time
-		arriveMentone   time.Time
+	// Leg 1: C/P from TH → Caulfield.
+	var thDeps []Departure
+	seen := map[string]bool{}
+	for _, c := range []struct{ route, dir int }{{routeCranbourne, dirCranbourne}, {routePakenham, dirPakenham}} {
+		deps, _ := client.GetDepartures(stopTownHall, c.route, c.dir, 20, windowStart)
+		for _, d := range deps {
+			if !seen[d.RunRef] {
+				seen[d.RunRef] = true
+				thDeps = append(thDeps, d)
+			}
+		}
 	}
-	var bestLeg2 *leg2Hit
 
-	for _, dep := range frankDeps {
-		departCaulfield, err := parseUTC(dep.EffectiveTime(realtime))
+	// Parallel-fetch in two batches.
+	var frankPats []frankPattern
+	var thCaulfArrs []time.Time
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		frankPats = fetchFrankPatterns(client, frankDeps,
+			stopCaulfield, stopMentone, stopMentone,
+			frankOutboundFullStops, arriveBy, realtime)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		thCaulfArrs = fetchStopTimes(client, thDeps, stopCaulfield, arriveBy, realtime)
+	}()
+	wg.Wait()
+
+	// Build TH leg pairs sorted by departure DESC (latest first for arrive_by mode).
+	type thLeg struct {
+		departTH        time.Time
+		arriveCaulfield time.Time
+	}
+	var thLegs []thLeg
+	for i, dep := range thDeps {
+		if thCaulfArrs[i].IsZero() {
+			continue
+		}
+		t, err := parseUTC(dep.EffectiveTime(realtime))
 		if err != nil {
 			continue
 		}
-		departCaulfield = rebaseToDate(departCaulfield, arriveBy)
+		t = rebaseToDate(t, arriveBy)
+		if t.After(arriveBy) {
+			continue
+		}
+		thLegs = append(thLegs, thLeg{t, thCaulfArrs[i]})
+	}
+	sort.Slice(thLegs, func(i, j int) bool { return thLegs[i].departTH.After(thLegs[j].departTH) })
+
+	type option struct {
+		departTH        time.Time
+		arriveCaulfield time.Time
+		departCaulfield time.Time
+		arriveMentone   time.Time
+		express         bool
+	}
+	var options []option
+
+	for i, frankDep := range frankDeps {
+		fp := frankPats[i]
+		if fp.arrivalAt.IsZero() || fp.arrivalAt.After(arriveBy) {
+			continue
+		}
+		t, err := parseUTC(frankDep.EffectiveTime(realtime))
+		if err != nil {
+			continue
+		}
+		departCaulfield := rebaseToDate(t, arriveBy)
 		if departCaulfield.After(arriveBy) {
 			continue
 		}
-		arriveMentone, err := findStopTimeInPattern(client, dep.RunRef, stopMentone, arriveBy, realtime)
-		if err != nil || arriveMentone.IsZero() {
-			continue
-		}
-		if arriveMentone.After(arriveBy) {
-			continue
-		}
-		if bestLeg2 == nil || departCaulfield.After(bestLeg2.departCaulfield) {
-			bestLeg2 = &leg2Hit{departCaulfield: departCaulfield, arriveMentone: arriveMentone}
-		}
-	}
+		connectDeadline := departCaulfield.Add(-2 * time.Minute)
 
-	if bestLeg2 == nil {
-		return nil, fmt.Errorf("no Frankston train from Caulfield arriving at Mentone by %s", arriveBy.Format("15:04"))
-	}
-
-	// Leg 1: find the latest Cranbourne/Pakenham departure from Town Hall arriving at Caulfield
-	// before bestLeg2.departCaulfield
-	candidates := []struct{ route, dir int }{
-		{routeCranbourne, dirCranbourne},
-		{routePakenham, dirPakenham},
-	}
-
-	type leg1Hit struct {
-		departTH       time.Time
-		arriveCaulfield time.Time
-	}
-	var bestLeg1 *leg1Hit
-
-	for _, c := range candidates {
-		deps, err := client.GetDepartures(stopTownHall, c.route, c.dir, 15, windowStart)
-		if err != nil {
-			return nil, fmt.Errorf("departures from Town Hall: %w", err)
-		}
-		for _, dep := range deps {
-			departTH, err := parseUTC(dep.EffectiveTime(realtime))
-			if err != nil {
+		// Find the latest TH train arriving at Caulfield in time (thLegs sorted latest first).
+		for k := range thLegs {
+			if thLegs[k].arriveCaulfield.After(connectDeadline) {
 				continue
 			}
-			departTH = rebaseToDate(departTH, arriveBy)
-			if departTH.After(bestLeg2.departCaulfield) {
-				continue
-			}
-			arriveCaulfield, err := findStopTimeInPattern(client, dep.RunRef, stopCaulfield, arriveBy, realtime)
-			if err != nil || arriveCaulfield.IsZero() {
-				continue
-			}
-			// Must arrive at Caulfield at least 2 minutes before the Frankston train departs
-			if arriveCaulfield.Add(2 * time.Minute).After(bestLeg2.departCaulfield) {
-				continue
-			}
-			if bestLeg1 == nil || departTH.After(bestLeg1.departTH) {
-				bestLeg1 = &leg1Hit{departTH: departTH, arriveCaulfield: arriveCaulfield}
-			}
+			options = append(options, option{
+				departTH:        thLegs[k].departTH,
+				arriveCaulfield: thLegs[k].arriveCaulfield,
+				departCaulfield: departCaulfield,
+				arriveMentone:   fp.arrivalAt,
+				express:         fp.express,
+			})
+			break
 		}
 	}
 
-	if bestLeg1 == nil {
-		return nil, fmt.Errorf("no train from Town Hall to Caulfield in time for the Frankston connection")
+	if len(options) == 0 {
+		return nil, fmt.Errorf("no train from Town Hall to Mentone arriving by %s", arriveBy.Format("15:04"))
 	}
 
-	return &JourneyResult{
-		Origin:      "Town Hall",
-		Destination: "Mentone",
-		DepartAt:    bestLeg1.departTH.In(melbourneTZ).Format("15:04"),
-		Transfer: &Transfer{
-			Station:         "Caulfield",
-			ArriveCaulfield: bestLeg1.arriveCaulfield.In(melbourneTZ).Format("15:04"),
-			Line:            "Frankston",
-			DepartCaulfield: bestLeg2.departCaulfield.In(melbourneTZ).Format("15:04"),
-		},
-		ArriveAt:    bestLeg2.arriveMentone.In(melbourneTZ).Format("15:04"),
-		Disruptions: activeDisruptions(client, arriveBy, routeCranbourne, routePakenham, routeFrankston),
-	}, nil
+	// Sort by TH departure DESC (latest = most flexibility at origin), take top 3.
+	sort.Slice(options, func(i, j int) bool { return options[i].departTH.After(options[j].departTH) })
+	if len(options) > 3 {
+		options = options[:3]
+	}
+
+	disruptions := activeDisruptions(client, arriveBy, routeCranbourne, routePakenham, routeFrankston)
+	results := make([]JourneyResult, len(options))
+	for i, o := range options {
+		results[i] = JourneyResult{
+			Origin:      "Town Hall",
+			Destination: "Mentone",
+			DepartAt:    o.departTH.In(melbourneTZ).Format("15:04"),
+			Express:     o.express,
+			Transfer: &Transfer{
+				Station:         "Caulfield",
+				ArriveCaulfield: o.arriveCaulfield.In(melbourneTZ).Format("15:04"),
+				Line:            "Frankston",
+				DepartCaulfield: o.departCaulfield.In(melbourneTZ).Format("15:04"),
+			},
+			ArriveAt: o.arriveMentone.In(melbourneTZ).Format("15:04"),
+		}
+	}
+	results[0].Disruptions = disruptions
+	return results, nil
 }
 
-// findStopTimeInPattern fetches the run pattern and returns the scheduled time
+// findStopTimeInPattern fetches the run pattern and returns the scheduled/estimated time
 // for the given stop_id, rebased to journeyDate in Melbourne time.
-// Returns zero time if the stop is not in this run's pattern.
 func findStopTimeInPattern(client *PTVClient, runRef string, stopID int, journeyDate time.Time, realtime bool) (time.Time, error) {
 	stops, err := client.GetPattern(runRef)
 	if err != nil {
@@ -265,10 +387,10 @@ func findStopTimeInPattern(client *PTVClient, runRef string, stopID int, journey
 	return time.Time{}, nil
 }
 
-// PlanReturnJourney finds the earliest Town Hall arrival given a departure time from the origin.
+// PlanReturnJourney finds up to 3 earliest journeys from origin to Town Hall departing at or after departAt.
 // departAt is in Melbourne local time, format "15:04".
 // date is optional (format "2006-01-02"); defaults to today in Melbourne time if empty.
-func PlanReturnJourney(client *PTVClient, from, departAtStr, date string, realtime bool) (*JourneyResult, error) {
+func PlanReturnJourney(client *PTVClient, from, departAtStr, date string, realtime bool) ([]JourneyResult, error) {
 	var base time.Time
 	if date == "" {
 		base = time.Now().In(melbourneTZ)
@@ -296,182 +418,200 @@ func PlanReturnJourney(client *PTVClient, from, departAtStr, date string, realti
 	}
 }
 
-// planReturnSandownPark finds the earliest Cranbourne/Pakenham train from Sandown Park
-// departing at or after departAt, and returns its arrival time at Town Hall.
-func planReturnSandownPark(client *PTVClient, departAt time.Time, realtime bool) (*JourneyResult, error) {
-	candidates := []struct{ route, dir int }{
-		{routeCranbourne, dirCity},
-		{routePakenham, dirCity},
-	}
-
-	type hit struct {
-		departSD  time.Time
-		arriveTH  time.Time
-	}
-	var best *hit
-
-	for _, c := range candidates {
-		deps, err := client.GetDepartures(stopSandownPark, c.route, c.dir, 10, departAt)
+// planReturnSandownPark finds up to 3 earliest C/P trains from Sandown Park to Town Hall from departAt.
+func planReturnSandownPark(client *PTVClient, departAt time.Time, realtime bool) ([]JourneyResult, error) {
+	var allDeps []Departure
+	seen := map[string]bool{}
+	for _, c := range []struct{ route, dir int }{{routeCranbourne, dirCity}, {routePakenham, dirCity}} {
+		deps, err := client.GetDepartures(stopSandownPark, c.route, c.dir, 15, departAt)
 		if err != nil {
 			return nil, fmt.Errorf("departures from Sandown Park: %w", err)
 		}
-		for _, dep := range deps {
-			departSD, err := parseUTC(dep.EffectiveTime(realtime))
-			if err != nil {
-				continue
-			}
-			departSD = rebaseToDate(departSD, departAt)
-			if departSD.Before(departAt) {
-				continue
-			}
-			arriveTH, err := findStopTimeInPattern(client, dep.RunRef, stopTownHall, departAt, realtime)
-			if err != nil || arriveTH.IsZero() {
-				continue
-			}
-			if best == nil || departSD.Before(best.departSD) {
-				best = &hit{departSD: departSD, arriveTH: arriveTH}
+		for _, d := range deps {
+			if !seen[d.RunRef] {
+				seen[d.RunRef] = true
+				allDeps = append(allDeps, d)
 			}
 		}
 	}
 
-	if best == nil {
-		return nil, fmt.Errorf("no train found from Sandown Park to Town Hall departing after %s", departAt.Format("15:04"))
+	type candidate struct {
+		dep      Departure
+		departSD time.Time
+	}
+	var candidates []candidate
+	for _, dep := range allDeps {
+		t, err := parseUTC(dep.EffectiveTime(realtime))
+		if err != nil {
+			continue
+		}
+		t = rebaseToDate(t, departAt)
+		if t.Before(departAt) {
+			continue
+		}
+		candidates = append(candidates, candidate{dep, t})
 	}
 
-	return &JourneyResult{
-		Origin:      "Sandown Park",
-		Destination: "Town Hall",
-		DepartAt:    best.departSD.In(melbourneTZ).Format("15:04"),
-		ArriveAt:    best.arriveTH.In(melbourneTZ).Format("15:04"),
-		Disruptions: activeDisruptions(client, departAt, routeCranbourne, routePakenham),
-	}, nil
+	arrivals := fetchStopTimes(client, func() []Departure {
+		ds := make([]Departure, len(candidates))
+		for i, c := range candidates {
+			ds[i] = c.dep
+		}
+		return ds
+	}(), stopTownHall, departAt, realtime)
+
+	type hit struct{ departSD, arriveTH time.Time }
+	var hits []hit
+	for i, c := range candidates {
+		if arrivals[i].IsZero() {
+			continue
+		}
+		hits = append(hits, hit{c.departSD, arrivals[i]})
+	}
+
+	if len(hits) == 0 {
+		return nil, fmt.Errorf("no train from Sandown Park to Town Hall departing after %s", departAt.Format("15:04"))
+	}
+
+	sort.Slice(hits, func(i, j int) bool { return hits[i].departSD.Before(hits[j].departSD) })
+	if len(hits) > 3 {
+		hits = hits[:3]
+	}
+
+	disruptions := activeDisruptions(client, departAt, routeCranbourne, routePakenham)
+	results := make([]JourneyResult, len(hits))
+	for i, h := range hits {
+		results[i] = JourneyResult{
+			Origin:      "Sandown Park",
+			Destination: "Town Hall",
+			DepartAt:    h.departSD.In(melbourneTZ).Format("15:04"),
+			ArriveAt:    h.arriveTH.In(melbourneTZ).Format("15:04"),
+		}
+	}
+	results[0].Disruptions = disruptions
+	return results, nil
 }
 
-// planReturnMentone finds the earliest return journey from Mentone to Town Hall
-// departing at or after departAt, via Caulfield (Frankston → Cranbourne/Pakenham).
-func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*JourneyResult, error) {
-	// Leg 1: Mentone → Caulfield on Frankston (City direction)
-	frankDeps, err := client.GetDepartures(stopMentone, routeFrankston, dirCity, 10, departAt)
+// planReturnMentone finds up to 3 earliest Mentone→Town Hall journeys from departAt.
+// Deduplicates by C/P connection at Caulfield (same connection = same TH arrival).
+func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) ([]JourneyResult, error) {
+	// Leg 1: Frankston from Mentone → Caulfield.
+	frankDeps, err := client.GetDepartures(stopMentone, routeFrankston, dirCity, 15, departAt)
 	if err != nil {
 		return nil, fmt.Errorf("departures from Mentone (Frankston): %w", err)
 	}
 
-	type leg1Hit struct {
+	// Leg 2: C/P from Caulfield → Town Hall.
+	var cpDeps []Departure
+	seenCP := map[string]bool{}
+	for _, c := range []struct{ route, dir int }{{routeCranbourne, dirCity}, {routePakenham, dirCity}} {
+		deps, _ := client.GetDepartures(stopCaulfield, c.route, c.dir, 20, departAt)
+		for _, d := range deps {
+			if !seenCP[d.RunRef] {
+				seenCP[d.RunRef] = true
+				cpDeps = append(cpDeps, d)
+			}
+		}
+	}
+
+	// Parallel-fetch in two batches.
+	var frankPats []frankPattern
+	var cpTHArrs []time.Time
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// fetchFrankPatterns: extract Caulfield arrival + express flag from each Frankston pattern.
+		frankPats = fetchFrankPatterns(client, frankDeps,
+			stopMentone, stopCaulfield, stopCaulfield,
+			frankInboundFullStops, departAt, realtime)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		cpTHArrs = fetchStopTimes(client, cpDeps, stopTownHall, departAt, realtime)
+	}()
+	wg.Wait()
+
+	// Parse C/P departure times from Caulfield and sort by time ASC.
+	type cpLeg struct {
 		runRef          string
-		departMentone   time.Time
-		arriveCaulfield time.Time
-	}
-	var bestLeg1 *leg1Hit
-
-	for _, dep := range frankDeps {
-		departMentone, err := parseUTC(dep.EffectiveTime(realtime))
-		if err != nil {
-			continue
-		}
-		departMentone = rebaseToDate(departMentone, departAt)
-		if departMentone.Before(departAt) {
-			continue
-		}
-		arriveCaulfield, err := findStopTimeInPattern(client, dep.RunRef, stopCaulfield, departAt, realtime)
-		if err != nil || arriveCaulfield.IsZero() {
-			continue
-		}
-		if bestLeg1 == nil || departMentone.Before(bestLeg1.departMentone) {
-			bestLeg1 = &leg1Hit{runRef: dep.RunRef, departMentone: departMentone, arriveCaulfield: arriveCaulfield}
-		}
-	}
-
-	if bestLeg1 == nil {
-		return nil, fmt.Errorf("no Frankston train from Mentone to Caulfield departing after %s", departAt.Format("15:04"))
-	}
-
-	// Leg 2: Caulfield → Town Hall on Cranbourne/Pakenham (City direction), at least 2 min after arriving
-	connectAfter := bestLeg1.arriveCaulfield.Add(2 * time.Minute)
-	candidates := []struct{ route, dir int }{
-		{routeCranbourne, dirCity},
-		{routePakenham, dirCity},
-	}
-
-	type leg2Hit struct {
 		departCaulfield time.Time
 		arriveTH        time.Time
 	}
-	var bestLeg2 *leg2Hit
-
-	for _, c := range candidates {
-		deps, err := client.GetDepartures(stopCaulfield, c.route, c.dir, 10, connectAfter)
+	var cpLegs []cpLeg
+	for i, dep := range cpDeps {
+		if cpTHArrs[i].IsZero() {
+			continue
+		}
+		t, err := parseUTC(dep.EffectiveTime(realtime))
 		if err != nil {
-			return nil, fmt.Errorf("departures from Caulfield: %w", err)
+			continue
 		}
-		for _, dep := range deps {
-			departCaulfield, err := parseUTC(dep.EffectiveTime(realtime))
-			if err != nil {
+		t = rebaseToDate(t, departAt)
+		cpLegs = append(cpLegs, cpLeg{dep.RunRef, t, cpTHArrs[i]})
+	}
+	sort.Slice(cpLegs, func(i, j int) bool { return cpLegs[i].departCaulfield.Before(cpLegs[j].departCaulfield) })
+
+	disruptions := activeDisruptions(client, departAt, routeCranbourne, routePakenham, routeFrankston)
+	usedCP := map[string]bool{}
+	var results []JourneyResult
+
+	for i, dep := range frankDeps {
+		if len(results) >= 3 {
+			break
+		}
+		fp := frankPats[i]
+		if fp.arrivalAt.IsZero() {
+			continue
+		}
+		t, err := parseUTC(dep.EffectiveTime(realtime))
+		if err != nil {
+			continue
+		}
+		departMentone := rebaseToDate(t, departAt)
+		if departMentone.Before(departAt) {
+			continue
+		}
+		connectAfter := fp.arrivalAt.Add(2 * time.Minute)
+
+		for _, cp := range cpLegs {
+			if usedCP[cp.runRef] {
 				continue
 			}
-			departCaulfield = rebaseToDate(departCaulfield, departAt)
-			if departCaulfield.Before(connectAfter) {
+			if cp.departCaulfield.Before(connectAfter) {
 				continue
 			}
-			arriveTH, err := findStopTimeInPattern(client, dep.RunRef, stopTownHall, departAt, realtime)
-			if err != nil || arriveTH.IsZero() {
-				continue
+			usedCP[cp.runRef] = true
+			r := JourneyResult{
+				Origin:      "Mentone",
+				Destination: "Town Hall",
+				DepartAt:    departMentone.In(melbourneTZ).Format("15:04"),
+				Express:     fp.express,
+				Transfer: &Transfer{
+					Station:         "Caulfield",
+					ArriveCaulfield: fp.arrivalAt.In(melbourneTZ).Format("15:04"),
+					Line:            "Cranbourne / Pakenham",
+					DepartCaulfield: cp.departCaulfield.In(melbourneTZ).Format("15:04"),
+				},
+				ArriveAt: cp.arriveTH.In(melbourneTZ).Format("15:04"),
 			}
-			if bestLeg2 == nil || departCaulfield.Before(bestLeg2.departCaulfield) {
-				bestLeg2 = &leg2Hit{departCaulfield: departCaulfield, arriveTH: arriveTH}
+			if len(results) == 0 {
+				r.Disruptions = disruptions
 			}
+			results = append(results, r)
+			break
 		}
 	}
 
-	if bestLeg2 == nil {
-		return nil, fmt.Errorf("no Cranbourne/Pakenham train from Caulfield to Town Hall after Frankston connection")
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no Frankston train from Mentone departing after %s", departAt.Format("15:04"))
 	}
-
-	return &JourneyResult{
-		Origin:      "Mentone",
-		Destination: "Town Hall",
-		DepartAt:    bestLeg1.departMentone.In(melbourneTZ).Format("15:04"),
-		Express:     isFrankstonExpress(client, bestLeg1.runRef),
-		Transfer: &Transfer{
-			Station:         "Caulfield",
-			ArriveCaulfield: bestLeg1.arriveCaulfield.In(melbourneTZ).Format("15:04"),
-			Line:            "Cranbourne / Pakenham",
-			DepartCaulfield: bestLeg2.departCaulfield.In(melbourneTZ).Format("15:04"),
-		},
-		ArriveAt:    bestLeg2.arriveTH.In(melbourneTZ).Format("15:04"),
-		Disruptions: activeDisruptions(client, departAt, routeCranbourne, routePakenham, routeFrankston),
-	}, nil
+	return results, nil
 }
 
-// isFrankstonExpress reports whether a Frankston line run from Mentone is express.
-// A full stopping service has 9 intermediate stops between Mentone and Caulfield;
-// express services have fewer (typically 1).
-func isFrankstonExpress(client *PTVClient, runRef string) bool {
-	const fullStoppingCount = 9
-	n := countStopsBetween(client, runRef, stopMentone, stopCaulfield)
-	return n >= 0 && n < fullStoppingCount
-}
-
-// countStopsBetween returns the number of intermediate stops between fromStop and toStop
-// in a run's pattern. Returns -1 if either stop is not found.
-func countStopsBetween(client *PTVClient, runRef string, fromStop, toStop int) int {
-	stops, err := client.GetPattern(runRef)
-	if err != nil {
-		return -1
-	}
-	fromIdx := -1
-	for i, s := range stops {
-		if s.StopID == fromStop && fromIdx < 0 {
-			fromIdx = i
-		} else if s.StopID == toStop && fromIdx >= 0 {
-			return i - fromIdx - 1
-		}
-	}
-	return -1
-}
-
-// PlanOutboundJourney finds the earliest Town Hall departure for the given destination,
-// given a departure time from Town Hall (depart-at mode).
-func PlanOutboundJourney(client *PTVClient, destination, departAtStr, date string, realtime bool) (*JourneyResult, error) {
+// PlanOutboundJourney finds up to 3 earliest TH→destination journeys departing at or after departAt.
+func PlanOutboundJourney(client *PTVClient, destination, departAtStr, date string, realtime bool) ([]JourneyResult, error) {
 	var base time.Time
 	if date == "" {
 		base = time.Now().In(melbourneTZ)
@@ -499,148 +639,209 @@ func PlanOutboundJourney(client *PTVClient, destination, departAtStr, date strin
 	}
 }
 
-// planOutboundSandownPark finds the earliest direct Cranbourne/Pakenham train from Town Hall
-// departing at or after departAt, and returns its arrival time at Sandown Park.
-func planOutboundSandownPark(client *PTVClient, departAt time.Time, realtime bool) (*JourneyResult, error) {
-	candidates := []struct{ route, dir int }{
-		{routeCranbourne, dirCranbourne},
-		{routePakenham, dirPakenham},
-	}
-
-	type hit struct {
-		departTH time.Time
-		arriveSD time.Time
-	}
-	var best *hit
-
-	for _, c := range candidates {
-		deps, err := client.GetDepartures(stopTownHall, c.route, c.dir, 10, departAt)
+// planOutboundSandownPark finds up to 3 earliest direct TH→Sandown Park trains from departAt.
+func planOutboundSandownPark(client *PTVClient, departAt time.Time, realtime bool) ([]JourneyResult, error) {
+	var allDeps []Departure
+	seen := map[string]bool{}
+	for _, c := range []struct{ route, dir int }{{routeCranbourne, dirCranbourne}, {routePakenham, dirPakenham}} {
+		deps, err := client.GetDepartures(stopTownHall, c.route, c.dir, 15, departAt)
 		if err != nil {
 			return nil, fmt.Errorf("departures from Town Hall: %w", err)
 		}
-		for _, dep := range deps {
-			departTH, err := parseUTC(dep.EffectiveTime(realtime))
-			if err != nil {
-				continue
-			}
-			departTH = rebaseToDate(departTH, departAt)
-			if departTH.Before(departAt) {
-				continue
-			}
-			arriveSD, err := findStopTimeInPattern(client, dep.RunRef, stopSandownPark, departAt, realtime)
-			if err != nil || arriveSD.IsZero() {
-				continue
-			}
-			if best == nil || departTH.Before(best.departTH) {
-				best = &hit{departTH: departTH, arriveSD: arriveSD}
+		for _, d := range deps {
+			if !seen[d.RunRef] {
+				seen[d.RunRef] = true
+				allDeps = append(allDeps, d)
 			}
 		}
 	}
 
-	if best == nil {
+	type candidate struct {
+		dep      Departure
+		departTH time.Time
+	}
+	var candidates []candidate
+	for _, dep := range allDeps {
+		t, err := parseUTC(dep.EffectiveTime(realtime))
+		if err != nil {
+			continue
+		}
+		t = rebaseToDate(t, departAt)
+		if t.Before(departAt) {
+			continue
+		}
+		candidates = append(candidates, candidate{dep, t})
+	}
+
+	arrivals := fetchStopTimes(client, func() []Departure {
+		ds := make([]Departure, len(candidates))
+		for i, c := range candidates {
+			ds[i] = c.dep
+		}
+		return ds
+	}(), stopSandownPark, departAt, realtime)
+
+	type hit struct{ departTH, arriveSD time.Time }
+	var hits []hit
+	for i, c := range candidates {
+		if arrivals[i].IsZero() {
+			continue
+		}
+		hits = append(hits, hit{c.departTH, arrivals[i]})
+	}
+
+	if len(hits) == 0 {
 		return nil, fmt.Errorf("no train from Town Hall to Sandown Park departing after %s", departAt.Format("15:04"))
 	}
 
-	return &JourneyResult{
-		Origin:      "Town Hall",
-		Destination: "Sandown Park",
-		DepartAt:    best.departTH.In(melbourneTZ).Format("15:04"),
-		ArriveAt:    best.arriveSD.In(melbourneTZ).Format("15:04"),
-		Disruptions: activeDisruptions(client, departAt, routeCranbourne, routePakenham),
-	}, nil
+	sort.Slice(hits, func(i, j int) bool { return hits[i].departTH.Before(hits[j].departTH) })
+	if len(hits) > 3 {
+		hits = hits[:3]
+	}
+
+	disruptions := activeDisruptions(client, departAt, routeCranbourne, routePakenham)
+	results := make([]JourneyResult, len(hits))
+	for i, h := range hits {
+		results[i] = JourneyResult{
+			Origin:      "Town Hall",
+			Destination: "Sandown Park",
+			DepartAt:    h.departTH.In(melbourneTZ).Format("15:04"),
+			ArriveAt:    h.arriveSD.In(melbourneTZ).Format("15:04"),
+		}
+	}
+	results[0].Disruptions = disruptions
+	return results, nil
 }
 
-// planOutboundMentone finds the earliest Town Hall → Caulfield (Cranbourne/Pakenham) →
-// Mentone (Frankston) journey departing at or after departAt.
-func planOutboundMentone(client *PTVClient, departAt time.Time, realtime bool) (*JourneyResult, error) {
-	// Leg 1: Town Hall → Caulfield on Cranbourne/Pakenham
-	candidates := []struct{ route, dir int }{
-		{routeCranbourne, dirCranbourne},
-		{routePakenham, dirPakenham},
-	}
-
-	type leg1Hit struct {
-		departTH        time.Time
-		arriveCaulfield time.Time
-	}
-	var bestLeg1 *leg1Hit
-
-	for _, c := range candidates {
-		deps, err := client.GetDepartures(stopTownHall, c.route, c.dir, 10, departAt)
+// planOutboundMentone finds up to 3 earliest TH→Mentone journeys from departAt.
+// Deduplicates by Frankston connection at Caulfield.
+func planOutboundMentone(client *PTVClient, departAt time.Time, realtime bool) ([]JourneyResult, error) {
+	// Leg 1: C/P from TH → Caulfield.
+	var thDeps []Departure
+	seen := map[string]bool{}
+	for _, c := range []struct{ route, dir int }{{routeCranbourne, dirCranbourne}, {routePakenham, dirPakenham}} {
+		deps, err := client.GetDepartures(stopTownHall, c.route, c.dir, 15, departAt)
 		if err != nil {
 			return nil, fmt.Errorf("departures from Town Hall: %w", err)
 		}
-		for _, dep := range deps {
-			departTH, err := parseUTC(dep.EffectiveTime(realtime))
-			if err != nil {
-				continue
-			}
-			departTH = rebaseToDate(departTH, departAt)
-			if departTH.Before(departAt) {
-				continue
-			}
-			arriveCaulfield, err := findStopTimeInPattern(client, dep.RunRef, stopCaulfield, departAt, realtime)
-			if err != nil || arriveCaulfield.IsZero() {
-				continue
-			}
-			if bestLeg1 == nil || departTH.Before(bestLeg1.departTH) {
-				bestLeg1 = &leg1Hit{departTH: departTH, arriveCaulfield: arriveCaulfield}
+		for _, d := range deps {
+			if !seen[d.RunRef] {
+				seen[d.RunRef] = true
+				thDeps = append(thDeps, d)
 			}
 		}
 	}
 
-	if bestLeg1 == nil {
-		return nil, fmt.Errorf("no train from Town Hall departing after %s", departAt.Format("15:04"))
-	}
-
-	// Leg 2: Caulfield → Mentone on Frankston, at least 2 min after arriving
-	connectAfter := bestLeg1.arriveCaulfield.Add(2 * time.Minute)
-	frankDeps, err := client.GetDepartures(stopCaulfield, routeFrankston, dirFrankston, 10, connectAfter)
+	// Leg 2: Frankston from Caulfield → Mentone.
+	frankDeps, err := client.GetDepartures(stopCaulfield, routeFrankston, dirFrankston, 20, departAt)
 	if err != nil {
 		return nil, fmt.Errorf("departures from Caulfield (Frankston): %w", err)
 	}
 
-	type leg2Hit struct {
-		departCaulfield time.Time
-		arriveMentone   time.Time
-	}
-	var bestLeg2 *leg2Hit
+	// Parallel-fetch in two batches.
+	var thCaulfArrs []time.Time
+	var frankPats []frankPattern
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		thCaulfArrs = fetchStopTimes(client, thDeps, stopCaulfield, departAt, realtime)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		frankPats = fetchFrankPatterns(client, frankDeps,
+			stopCaulfield, stopMentone, stopMentone,
+			frankOutboundFullStops, departAt, realtime)
+	}()
+	wg.Wait()
 
-	for _, dep := range frankDeps {
-		departCaulfield, err := parseUTC(dep.EffectiveTime(realtime))
+	// Build TH leg pairs sorted by departure ASC (earliest first for depart_at mode).
+	type thLeg struct {
+		departTH        time.Time
+		arriveCaulfield time.Time
+	}
+	var thLegs []thLeg
+	for i, dep := range thDeps {
+		if thCaulfArrs[i].IsZero() {
+			continue
+		}
+		t, err := parseUTC(dep.EffectiveTime(realtime))
 		if err != nil {
 			continue
 		}
-		departCaulfield = rebaseToDate(departCaulfield, departAt)
-		if departCaulfield.Before(connectAfter) {
+		t = rebaseToDate(t, departAt)
+		if t.Before(departAt) {
 			continue
 		}
-		arriveMentone, err := findStopTimeInPattern(client, dep.RunRef, stopMentone, departAt, realtime)
-		if err != nil || arriveMentone.IsZero() {
+		thLegs = append(thLegs, thLeg{t, thCaulfArrs[i]})
+	}
+	sort.Slice(thLegs, func(i, j int) bool { return thLegs[i].departTH.Before(thLegs[j].departTH) })
+
+	// Build Frankston leg pairs sorted by departure ASC.
+	type frankLeg struct {
+		runRef          string
+		departCaulfield time.Time
+		arriveMentone   time.Time
+		express         bool
+	}
+	var frankLegs []frankLeg
+	for i, dep := range frankDeps {
+		fp := frankPats[i]
+		if fp.arrivalAt.IsZero() {
 			continue
 		}
-		if bestLeg2 == nil || departCaulfield.Before(bestLeg2.departCaulfield) {
-			bestLeg2 = &leg2Hit{departCaulfield: departCaulfield, arriveMentone: arriveMentone}
+		t, err := parseUTC(dep.EffectiveTime(realtime))
+		if err != nil {
+			continue
+		}
+		t = rebaseToDate(t, departAt)
+		frankLegs = append(frankLegs, frankLeg{dep.RunRef, t, fp.arrivalAt, fp.express})
+	}
+	sort.Slice(frankLegs, func(i, j int) bool { return frankLegs[i].departCaulfield.Before(frankLegs[j].departCaulfield) })
+
+	disruptions := activeDisruptions(client, departAt, routeCranbourne, routePakenham, routeFrankston)
+	usedFrank := map[string]bool{}
+	var results []JourneyResult
+
+	for _, th := range thLegs {
+		if len(results) >= 3 {
+			break
+		}
+		connectAfter := th.arriveCaulfield.Add(2 * time.Minute)
+		for _, fl := range frankLegs {
+			if usedFrank[fl.runRef] {
+				continue
+			}
+			if fl.departCaulfield.Before(connectAfter) {
+				continue
+			}
+			usedFrank[fl.runRef] = true
+			r := JourneyResult{
+				Origin:      "Town Hall",
+				Destination: "Mentone",
+				DepartAt:    th.departTH.In(melbourneTZ).Format("15:04"),
+				Express:     fl.express,
+				Transfer: &Transfer{
+					Station:         "Caulfield",
+					ArriveCaulfield: th.arriveCaulfield.In(melbourneTZ).Format("15:04"),
+					Line:            "Frankston",
+					DepartCaulfield: fl.departCaulfield.In(melbourneTZ).Format("15:04"),
+				},
+				ArriveAt: fl.arriveMentone.In(melbourneTZ).Format("15:04"),
+			}
+			if len(results) == 0 {
+				r.Disruptions = disruptions
+			}
+			results = append(results, r)
+			break
 		}
 	}
 
-	if bestLeg2 == nil {
-		return nil, fmt.Errorf("no Frankston train from Caulfield to Mentone after connection")
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no train from Town Hall to Mentone departing after %s", departAt.Format("15:04"))
 	}
-
-	return &JourneyResult{
-		Origin:      "Town Hall",
-		Destination: "Mentone",
-		DepartAt:    bestLeg1.departTH.In(melbourneTZ).Format("15:04"),
-		Transfer: &Transfer{
-			Station:         "Caulfield",
-			ArriveCaulfield: bestLeg1.arriveCaulfield.In(melbourneTZ).Format("15:04"),
-			Line:            "Frankston",
-			DepartCaulfield: bestLeg2.departCaulfield.In(melbourneTZ).Format("15:04"),
-		},
-		ArriveAt:    bestLeg2.arriveMentone.In(melbourneTZ).Format("15:04"),
-		Disruptions: activeDisruptions(client, departAt, routeCranbourne, routePakenham, routeFrankston),
-	}, nil
+	return results, nil
 }
 
 // activeDisruptions fetches disruptions for the given routes and returns those
@@ -658,12 +859,10 @@ func activeDisruptions(client *PTVClient, journeyDate time.Time, routeIDs ...int
 			if seen[d.ID] {
 				continue
 			}
-			// Parse from_date; skip if it hasn't started yet
 			from, err := time.Parse(time.RFC3339, d.FromDate)
 			if err != nil || journeyDate.Before(from) {
 				continue
 			}
-			// If to_date is set, skip if the disruption has already ended
 			if d.ToDate != "" {
 				to, err := time.Parse(time.RFC3339, d.ToDate)
 				if err == nil && journeyDate.After(to) {
@@ -678,8 +877,7 @@ func activeDisruptions(client *PTVClient, journeyDate time.Time, routeIDs ...int
 }
 
 // rebaseToDate takes the Melbourne time-of-day from apiTime and returns that
-// time on journeyDate. This normalises times from the API (which may return
-// today's schedule) so they compare correctly against a future arriveBy.
+// time on journeyDate.
 func rebaseToDate(apiTime, journeyDate time.Time) time.Time {
 	local := apiTime.In(melbourneTZ)
 	base := journeyDate.In(melbourneTZ)
@@ -689,4 +887,22 @@ func rebaseToDate(apiTime, journeyDate time.Time) time.Time {
 
 func parseUTC(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
+}
+
+// countStopsBetween returns the number of intermediate stops between fromStop and toStop
+// in a run's pattern. Returns -1 if either stop is not found.
+func countStopsBetween(client *PTVClient, runRef string, fromStop, toStop int) int {
+	stops, err := client.GetPattern(runRef)
+	if err != nil {
+		return -1
+	}
+	fromIdx := -1
+	for i, s := range stops {
+		if s.StopID == fromStop && fromIdx < 0 {
+			fromIdx = i
+		} else if s.StopID == toStop && fromIdx >= 0 {
+			return i - fromIdx - 1
+		}
+	}
+	return -1
 }

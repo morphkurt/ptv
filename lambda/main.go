@@ -87,7 +87,7 @@ func handleTimetable(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewa
 	realtime := params["realtime"] == "true"
 	client := newClient()
 
-	var result *JourneyResult
+	var results []JourneyResult
 	var err error
 
 	if from := params["from"]; from != "" {
@@ -95,12 +95,12 @@ func handleTimetable(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewa
 		if departAt == "" {
 			return errResponse(http.StatusBadRequest, "missing required query param: depart_at"), nil
 		}
-		result, err = PlanReturnJourney(client, from, departAt, date, realtime)
+		results, err = PlanReturnJourney(client, from, departAt, date, realtime)
 	} else if destination := params["destination"]; destination != "" {
 		if arriveBy := params["arrive_by"]; arriveBy != "" {
-			result, err = PlanJourney(client, destination, arriveBy, date, realtime)
+			results, err = PlanJourney(client, destination, arriveBy, date, realtime)
 		} else if departAt := params["depart_at"]; departAt != "" {
-			result, err = PlanOutboundJourney(client, destination, departAt, date, realtime)
+			results, err = PlanOutboundJourney(client, destination, departAt, date, realtime)
 		} else {
 			return errResponse(http.StatusBadRequest, "provide arrive_by or depart_at with destination"), nil
 		}
@@ -112,7 +112,7 @@ func handleTimetable(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewa
 		return errResponse(http.StatusBadRequest, err.Error()), nil
 	}
 
-	body, _ := json.Marshal(result)
+	body, _ := json.Marshal(results)
 	return awsevents.APIGatewayV2HTTPResponse{
 		StatusCode: http.StatusOK,
 		Headers:    map[string]string{"Content-Type": "application/json"},
@@ -178,13 +178,13 @@ func main() {
 	realtime := flag.Bool("realtime", false, "use live estimated departure times")
 	flag.Parse()
 
-	var result *JourneyResult
+	var results []JourneyResult
 	var err error
 	switch {
 	case *from != "" && *depart != "":
-		result, err = PlanReturnJourney(newClient(), *from, *depart, *date, *realtime)
+		results, err = PlanReturnJourney(newClient(), *from, *depart, *date, *realtime)
 	case *dest != "" && *arrive != "":
-		result, err = PlanJourney(newClient(), *dest, *arrive, *date, *realtime)
+		results, err = PlanJourney(newClient(), *dest, *arrive, *date, *realtime)
 	default:
 		fmt.Fprintln(os.Stderr, "usage:")
 		fmt.Fprintln(os.Stderr, "  outbound: ptv -dest mentone -arrive 17:30 [-date YYYY-MM-DD] [-realtime]")
@@ -196,6 +196,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	out, _ := json.MarshalIndent(result, "", "  ")
+	out, _ := json.MarshalIndent(results, "", "  ")
 	fmt.Println(string(out))
 }
