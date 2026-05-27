@@ -215,8 +215,8 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 			if err != nil || arriveCaulfield.IsZero() {
 				continue
 			}
-			// Must arrive at Caulfield at least 5 minutes before the Frankston train departs
-			if arriveCaulfield.Add(5 * time.Minute).After(bestLeg2.departCaulfield) {
+			// Must arrive at Caulfield at least 2 minutes before the Frankston train departs
+			if arriveCaulfield.Add(2 * time.Minute).After(bestLeg2.departCaulfield) {
 				continue
 			}
 			if bestLeg1 == nil || departTH.After(bestLeg1.departTH) {
@@ -383,8 +383,8 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*J
 		return nil, fmt.Errorf("no Frankston train from Mentone to Caulfield departing after %s", departAt.Format("15:04"))
 	}
 
-	// Leg 2: Caulfield → Town Hall on Cranbourne/Pakenham (City direction), at least 5 min after arriving
-	connectAfter := bestLeg1.arriveCaulfield.Add(5 * time.Minute)
+	// Leg 2: Caulfield → Town Hall on Cranbourne/Pakenham (City direction), at least 2 min after arriving
+	connectAfter := bestLeg1.arriveCaulfield.Add(2 * time.Minute)
 	candidates := []struct{ route, dir int }{
 		{routeCranbourne, dirCity},
 		{routePakenham, dirCity},
@@ -563,8 +563,8 @@ func planOutboundMentone(client *PTVClient, departAt time.Time, realtime bool) (
 		return nil, fmt.Errorf("no train from Town Hall departing after %s", departAt.Format("15:04"))
 	}
 
-	// Leg 2: Caulfield → Mentone on Frankston, at least 5 min after arriving
-	connectAfter := bestLeg1.arriveCaulfield.Add(5 * time.Minute)
+	// Leg 2: Caulfield → Mentone on Frankston, at least 2 min after arriving
+	connectAfter := bestLeg1.arriveCaulfield.Add(2 * time.Minute)
 	frankDeps, err := client.GetDepartures(stopCaulfield, routeFrankston, dirFrankston, 10, connectAfter)
 	if err != nil {
 		return nil, fmt.Errorf("departures from Caulfield (Frankston): %w", err)

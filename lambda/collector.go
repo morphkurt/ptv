@@ -150,8 +150,8 @@ func storeTransfer(ctx context.Context, ptv *PTVClient, db *dynamodb.Client, tab
 			continue
 		}
 
-		// First leg 2 train departing ≥5 min after scheduled transfer arrival
-		connectAfter := transArr.Scheduled.Add(5 * time.Minute)
+		// First leg 2 train departing ≥2 min after scheduled transfer arrival
+		connectAfter := transArr.Scheduled.Add(2 * time.Minute)
 		connIdx := -1
 		for k, leg2 := range leg2Deps {
 			if !leg2.departSch.Before(connectAfter) &&
@@ -176,7 +176,7 @@ func storeTransfer(ctx context.Context, ptv *PTVClient, db *dynamodb.Client, tab
 		item["connect_run_ref"] = strAttr(conn.runRef)
 
 		if conn.hasEst && destArr.HasEstimate {
-			estConnectAfter := transArr.Estimated.Add(5 * time.Minute)
+			estConnectAfter := transArr.Estimated.Add(2 * time.Minute)
 			if !conn.departEst.Before(estConnectAfter) {
 				estMin := roundMinutes(destArr.Estimated.Sub(dep.departEst))
 				item["arrive_actual"] = strAttr(destArr.Estimated.In(melbourneTZ).Format("15:04"))

@@ -168,7 +168,7 @@ func collectTransfer(
 		}
 
 		// Find the first leg 2 train departing ≥ transfer arrival + 5 min (scheduled)
-		connectAfter := transArr.Scheduled.Add(5 * time.Minute)
+		connectAfter := transArr.Scheduled.Add(2 * time.Minute)
 		connIdx := -1
 		for k, leg2 := range leg2Deps {
 			if !leg2.departSch.Before(connectAfter) &&
@@ -197,7 +197,7 @@ func collectTransfer(
 		}
 
 		if leg1.hasEst && transArr.HasEstimate && conn.hasEst && destArr.HasEstimate {
-			estConnectAfter := transArr.Estimated.Add(5 * time.Minute)
+			estConnectAfter := transArr.Estimated.Add(2 * time.Minute)
 			if !conn.departEst.Before(estConnectAfter) {
 				estMin := roundMinutes(destArr.Estimated.Sub(leg1.departEst))
 				delay := roundMinutes(leg1.departEst.Sub(leg1.departSch))
