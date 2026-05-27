@@ -430,7 +430,7 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*J
 		Origin:      "Mentone",
 		Destination: "Town Hall",
 		DepartAt:    bestLeg1.departMentone.In(melbourneTZ).Format("15:04"),
-		Express:     countStopsBetween(client, bestLeg1.runRef, stopMentone, stopCaulfield) == 0,
+		Express:     isFrankstonExpress(client, bestLeg1.runRef),
 		Transfer: &Transfer{
 			Station:         "Caulfield",
 			ArriveCaulfield: bestLeg1.arriveCaulfield.In(melbourneTZ).Format("15:04"),
@@ -440,6 +440,15 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*J
 		ArriveAt:    bestLeg2.arriveTH.In(melbourneTZ).Format("15:04"),
 		Disruptions: activeDisruptions(client, departAt, routeCranbourne, routePakenham, routeFrankston),
 	}, nil
+}
+
+// isFrankstonExpress reports whether a Frankston line run from Mentone is express.
+// A full stopping service has 9 intermediate stops between Mentone and Caulfield;
+// express services have fewer (typically 1).
+func isFrankstonExpress(client *PTVClient, runRef string) bool {
+	const fullStoppingCount = 9
+	n := countStopsBetween(client, runRef, stopMentone, stopCaulfield)
+	return n >= 0 && n < fullStoppingCount
 }
 
 // countStopsBetween returns the number of intermediate stops between fromStop and toStop
