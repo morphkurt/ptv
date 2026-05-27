@@ -84,13 +84,21 @@ resource "aws_s3_bucket_policy" "spa" {
 
 # ── Upload SPA files ──────────────────────────────────────────────────────────
 
+locals {
+  spa_index_content = replace(
+    file("${local.spa_src_dir}/index.html"),
+    "__API_URL__",
+    trimsuffix(aws_apigatewayv2_stage.default.invoke_url, "/")
+  )
+}
+
 resource "aws_s3_object" "spa_index" {
   bucket        = aws_s3_bucket.spa.id
   key           = "index.html"
-  source        = "${local.spa_src_dir}/index.html"
+  content       = local.spa_index_content
   content_type  = "text/html; charset=utf-8"
   cache_control = "no-cache"
-  etag          = filemd5("${local.spa_src_dir}/index.html")
+  etag          = md5(local.spa_index_content)
 }
 
 resource "aws_s3_object" "spa_manifest" {
