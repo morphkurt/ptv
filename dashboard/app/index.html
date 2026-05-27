@@ -243,6 +243,19 @@
     .transfer-value { font-weight: 500; font-variant-numeric: tabular-nums; }
     .transfer-line  { font-size: 0.72rem; color: var(--muted); text-align: right; margin-top: -2px; margin-bottom: 4px; }
 
+    .express-badge {
+      font-size: 0.62rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      background: rgba(59,130,246,0.15);
+      color: var(--blue);
+      padding: 2px 7px;
+      border-radius: 20px;
+      margin-left: 8px;
+      text-transform: uppercase;
+      vertical-align: middle;
+    }
+
     /* Disruptions */
     .disruption {
       margin-top: 12px;
@@ -1052,7 +1065,7 @@ function journeyCard(j) {
 
   return `
     <div class="card">
-      <div class="card-dest">→ ${escHtml(j.destination).toUpperCase()}</div>
+      <div class="card-dest">→ ${escHtml(j.destination).toUpperCase()}${j.express ? '<span class="express-badge">Express</span>' : ''}</div>
       <div class="timing">
         <div class="timing-col">
           <div class="timing-label">Departs</div>

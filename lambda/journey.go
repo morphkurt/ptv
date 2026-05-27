@@ -44,6 +44,7 @@ type JourneyResult struct {
 	Destination string           `json:"destination"`
 	DepartAt    string           `json:"depart_at"`
 	ArriveAt    string           `json:"arrive_at"`
+	Express     bool             `json:"express,omitempty"`
 	Transfer    *Transfer        `json:"transfer,omitempty"`
 	Disruptions []DisruptionInfo `json:"disruptions,omitempty"`
 }
@@ -356,6 +357,7 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*J
 	}
 
 	type leg1Hit struct {
+		runRef          string
 		departMentone   time.Time
 		arriveCaulfield time.Time
 	}
@@ -375,7 +377,7 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*J
 			continue
 		}
 		if bestLeg1 == nil || departMentone.Before(bestLeg1.departMentone) {
-			bestLeg1 = &leg1Hit{departMentone: departMentone, arriveCaulfield: arriveCaulfield}
+			bestLeg1 = &leg1Hit{runRef: dep.RunRef, departMentone: departMentone, arriveCaulfield: arriveCaulfield}
 		}
 	}
 
@@ -428,6 +430,7 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*J
 		Origin:      "Mentone",
 		Destination: "Town Hall",
 		DepartAt:    bestLeg1.departMentone.In(melbourneTZ).Format("15:04"),
+		Express:     countStopsBetween(client, bestLeg1.runRef, stopMentone, stopCaulfield) == 0,
 		Transfer: &Transfer{
 			Station:         "Caulfield",
 			ArriveCaulfield: bestLeg1.arriveCaulfield.In(melbourneTZ).Format("15:04"),
@@ -437,6 +440,24 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) (*J
 		ArriveAt:    bestLeg2.arriveTH.In(melbourneTZ).Format("15:04"),
 		Disruptions: activeDisruptions(client, departAt, routeCranbourne, routePakenham, routeFrankston),
 	}, nil
+}
+
+// countStopsBetween returns the number of intermediate stops between fromStop and toStop
+// in a run's pattern. Returns -1 if either stop is not found.
+func countStopsBetween(client *PTVClient, runRef string, fromStop, toStop int) int {
+	stops, err := client.GetPattern(runRef)
+	if err != nil {
+		return -1
+	}
+	fromIdx := -1
+	for i, s := range stops {
+		if s.StopID == fromStop && fromIdx < 0 {
+			fromIdx = i
+		} else if s.StopID == toStop && fromIdx >= 0 {
+			return i - fromIdx - 1
+		}
+	}
+	return -1
 }
 
 // PlanOutboundJourney finds the earliest Town Hall departure for the given destination,
