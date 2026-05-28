@@ -1149,8 +1149,7 @@ async function refresh() {
 
   try {
     if (lockedJourney) {
-      // Silently fetch a fresh arrival estimate for the locked train.
-      await refreshLocked(date);
+      await refreshLocked();
       renderLockedView();
     } else if (currentStation === "townhall") {
       const time = getQueryTime();
@@ -1184,34 +1183,19 @@ async function refresh() {
   startCountdown();
 }
 
-async function refreshLocked(date) {
+async function refreshLocked() {
   const lj = lockedJourney;
-  // Query with a time 15 min before departure to ensure the locked train appears.
-  const [lh, lm] = lj.depart_at.split(":").map(Number);
-  const offsetMin = lh * 60 + lm - 15;
-  const h = Math.floor(((offsetMin % 1440) + 1440) % 1440 / 60);
-  const m = ((offsetMin % 1440) + 1440) % 1440 % 60;
-  const queryTime = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
-
+  if (!lj.track_run_ref || !lj.dest_key) return;
   try {
-    let results;
-    if (lj.origin === "Town Hall") {
-      // Outbound from TH.
-      const dest = lj.destination === "Mentone" ? "mentone" : "sandown_park";
-      if (timeMode === "arrive_by") {
-        results = await fetchJourney({ destination: dest, arrive_by: lj.arrive_at, date, realtime: "true" });
-      } else {
-        results = await fetchJourney({ destination: dest, depart_at: queryTime, date, realtime: "true" });
-      }
-    } else {
-      // Return from station.
-      const from = lj.origin === "Mentone" ? "mentone" : "sandown_park";
-      results = await fetchJourney({ from, depart_at: queryTime, date, realtime: "true" });
-    }
-    // Find the matching journey by departure time.
-    const match = results.find(r => r.depart_at === lj.depart_at);
-    if (match && match.arrive_at) {
-      lockedJourney = { ...lj, arrive_at: match.arrive_at };
+    const base = getApiBase();
+    const resp = await fetch(
+      `${base}/track?run_ref=${encodeURIComponent(lj.track_run_ref)}&destination=${lj.dest_key}`
+    );
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.arrive_at) {
+      lockedJourney = { ...lj, arrive_at: data.arrive_at, is_realtime: !!data.realtime };
+      renderLockedView();
     }
   } catch(_) {
     // Keep showing last known arrival.
@@ -1324,14 +1308,23 @@ function errorCard(dest, err) {
 }
 
 // ── Boarding ──────────────────────────────────────────
+const destKeyMap = {
+  "Town Hall":    "townhall",
+  "Mentone":      "mentone",
+  "Sandown Park": "sandown_park",
+};
+
 function boardTrain(j) {
   lockedJourney = {
-    origin:      j.origin,
-    destination: j.destination,
-    depart_at:   j.depart_at,
-    arrive_at:   j.arrive_at,
-    express:     j.express || false,
-    transfer:    j.transfer || null,
+    origin:        j.origin,
+    destination:   j.destination,
+    depart_at:     j.depart_at,
+    arrive_at:     j.arrive_at,
+    express:       j.express || false,
+    transfer:      j.transfer || null,
+    track_run_ref: j.track_run_ref || null,
+    dest_key:      destKeyMap[j.destination] || null,
+    is_realtime:   false,
   };
   renderLockedView();
 }
@@ -1366,11 +1359,15 @@ function renderLockedView() {
       <div class="transfer-line">${escHtml(lj.transfer.line)} line</div>
     </div>` : "";
 
+  const liveHtml = lj.is_realtime
+    ? `<span style="font-size:0.68rem;color:var(--green);letter-spacing:0.05em;text-transform:uppercase;margin-left:6px">⚡ Live</span>`
+    : `<span style="font-size:0.68rem;color:var(--muted);letter-spacing:0.05em;text-transform:uppercase;margin-left:6px">Scheduled</span>`;
+
   document.getElementById("cards").innerHTML = `
     <div class="transit-card">
       <div class="transit-label">🔒 In transit${lj.express ? ' <span class="express-badge">Express</span>' : ''}</div>
       <div class="transit-route">${escHtml(lj.origin)} → ${escHtml(lj.destination)}</div>
-      <div class="transit-arr-label">Arriving</div>
+      <div class="transit-arr-label">Arriving ${liveHtml}</div>
       <div class="transit-arriving">
         <div class="transit-time">${lj.arrive_at}</div>
         <div class="transit-countdown ${cdClass}">${cdText}</div>

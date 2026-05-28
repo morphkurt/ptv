@@ -64,6 +64,8 @@ func apiHandler(ctx context.Context, req awsevents.APIGatewayV2HTTPRequest) (aws
 	switch req.RawPath {
 	case "/travel-times":
 		resp, err = handleTravelTimes(req)
+	case "/track":
+		resp, err = handleTrack(req)
 	case "/history":
 		if dbClient == nil || dbTable == "" {
 			resp = errResponse(http.StatusServiceUnavailable, "history not configured")
@@ -118,6 +120,59 @@ func handleTimetable(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewa
 		Headers:    map[string]string{"Content-Type": "application/json"},
 		Body:       string(body),
 	}, nil
+}
+
+func handleTrack(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewayV2HTTPResponse, error) {
+	params := req.QueryStringParameters
+	runRef := params["run_ref"]
+	destination := params["destination"]
+	if runRef == "" || destination == "" {
+		return errResponse(http.StatusBadRequest, "missing run_ref or destination"), nil
+	}
+
+	destStops := map[string]int{
+		"mentone":      stopMentone,
+		"sandown_park": stopSandownPark,
+		"townhall":     stopTownHall,
+	}
+	stopID, ok := destStops[destination]
+	if !ok {
+		return errResponse(http.StatusBadRequest, "unknown destination"), nil
+	}
+
+	stops, err := newClient().GetPattern(runRef)
+	if err != nil {
+		log.Printf("track GetPattern %s: %v", runRef, err)
+		return errResponse(http.StatusBadRequest, err.Error()), nil
+	}
+
+	for _, s := range stops {
+		if s.StopID != stopID {
+			continue
+		}
+		t, err := parseUTC(s.ScheduledDeparture)
+		if err != nil {
+			break
+		}
+		result := map[string]interface{}{
+			"arrive_at": t.In(melbourneTZ).Format("15:04"),
+			"realtime":  false,
+		}
+		if s.EstimatedDeparture != "" {
+			if est, err := parseUTC(s.EstimatedDeparture); err == nil {
+				result["arrive_at"] = est.In(melbourneTZ).Format("15:04")
+				result["realtime"] = true
+			}
+		}
+		body, _ := json.Marshal(result)
+		return awsevents.APIGatewayV2HTTPResponse{
+			StatusCode: http.StatusOK,
+			Headers:    map[string]string{"Content-Type": "application/json"},
+			Body:       string(body),
+		}, nil
+	}
+
+	return errResponse(http.StatusNotFound, "stop not found in run pattern"), nil
 }
 
 func handleTravelTimes(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewayV2HTTPResponse, error) {

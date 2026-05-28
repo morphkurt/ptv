@@ -56,6 +56,7 @@ type JourneyResult struct {
 	Express     bool             `json:"express,omitempty"`
 	Transfer    *Transfer        `json:"transfer,omitempty"`
 	Disruptions []DisruptionInfo `json:"disruptions,omitempty"`
+	TrackRunRef string           `json:"track_run_ref,omitempty"` // run that reaches the final destination
 }
 
 type Transfer struct {
@@ -145,13 +146,17 @@ func planSandownPark(client *PTVClient, arriveBy, windowStart time.Time, realtim
 	}
 	wg.Wait()
 
-	type hit struct{ departTH, arriveSD time.Time }
+	type hit struct {
+		departTH time.Time
+		arriveSD time.Time
+		runRef   string
+	}
 	var hits []hit
 	for i, c := range candidates {
 		if arrivals[i].IsZero() || arrivals[i].After(arriveBy) {
 			continue
 		}
-		hits = append(hits, hit{c.departTH, arrivals[i]})
+		hits = append(hits, hit{c.departTH, arrivals[i], c.dep.RunRef})
 	}
 
 	if len(hits) == 0 {
@@ -171,6 +176,7 @@ func planSandownPark(client *PTVClient, arriveBy, windowStart time.Time, realtim
 			Destination: "Sandown Park",
 			DepartAt:    h.departTH.In(melbourneTZ).Format("15:04"),
 			ArriveAt:    h.arriveSD.In(melbourneTZ).Format("15:04"),
+			TrackRunRef: h.runRef,
 		}
 	}
 	results[0].Disruptions = disruptions
@@ -303,6 +309,7 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 		departCaulfield time.Time
 		arriveMentone   time.Time
 		express         bool
+		frankRunRef     string
 	}
 	var options []option
 
@@ -332,6 +339,7 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 				departCaulfield: departCaulfield,
 				arriveMentone:   fp.arrivalAt,
 				express:         fp.express,
+				frankRunRef:     frankDep.RunRef,
 			})
 			break
 		}
@@ -361,7 +369,8 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 				Line:            "Frankston",
 				DepartCaulfield: o.departCaulfield.In(melbourneTZ).Format("15:04"),
 			},
-			ArriveAt: o.arriveMentone.In(melbourneTZ).Format("15:04"),
+			ArriveAt:    o.arriveMentone.In(melbourneTZ).Format("15:04"),
+			TrackRunRef: o.frankRunRef,
 		}
 	}
 	results[0].Disruptions = disruptions
@@ -460,13 +469,17 @@ func planReturnSandownPark(client *PTVClient, departAt time.Time, realtime bool)
 		return ds
 	}(), stopTownHall, departAt, realtime)
 
-	type hit struct{ departSD, arriveTH time.Time }
+	type hit struct {
+		departSD time.Time
+		arriveTH time.Time
+		runRef   string
+	}
 	var hits []hit
 	for i, c := range candidates {
 		if arrivals[i].IsZero() {
 			continue
 		}
-		hits = append(hits, hit{c.departSD, arrivals[i]})
+		hits = append(hits, hit{c.departSD, arrivals[i], c.dep.RunRef})
 	}
 
 	if len(hits) == 0 {
@@ -486,6 +499,7 @@ func planReturnSandownPark(client *PTVClient, departAt time.Time, realtime bool)
 			Destination: "Town Hall",
 			DepartAt:    h.departSD.In(melbourneTZ).Format("15:04"),
 			ArriveAt:    h.arriveTH.In(melbourneTZ).Format("15:04"),
+			TrackRunRef: h.runRef,
 		}
 	}
 	results[0].Disruptions = disruptions
@@ -594,7 +608,8 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) ([]
 					Line:            "Cranbourne / Pakenham",
 					DepartCaulfield: cp.departCaulfield.In(melbourneTZ).Format("15:04"),
 				},
-				ArriveAt: cp.arriveTH.In(melbourneTZ).Format("15:04"),
+				ArriveAt:    cp.arriveTH.In(melbourneTZ).Format("15:04"),
+				TrackRunRef: cp.runRef,
 			}
 			if len(results) == 0 {
 				r.Disruptions = disruptions
@@ -681,13 +696,17 @@ func planOutboundSandownPark(client *PTVClient, departAt time.Time, realtime boo
 		return ds
 	}(), stopSandownPark, departAt, realtime)
 
-	type hit struct{ departTH, arriveSD time.Time }
+	type hit struct {
+		departTH time.Time
+		arriveSD time.Time
+		runRef   string
+	}
 	var hits []hit
 	for i, c := range candidates {
 		if arrivals[i].IsZero() {
 			continue
 		}
-		hits = append(hits, hit{c.departTH, arrivals[i]})
+		hits = append(hits, hit{c.departTH, arrivals[i], c.dep.RunRef})
 	}
 
 	if len(hits) == 0 {
@@ -707,6 +726,7 @@ func planOutboundSandownPark(client *PTVClient, departAt time.Time, realtime boo
 			Destination: "Sandown Park",
 			DepartAt:    h.departTH.In(melbourneTZ).Format("15:04"),
 			ArriveAt:    h.arriveSD.In(melbourneTZ).Format("15:04"),
+			TrackRunRef: h.runRef,
 		}
 	}
 	results[0].Disruptions = disruptions
@@ -828,7 +848,8 @@ func planOutboundMentone(client *PTVClient, departAt time.Time, realtime bool) (
 					Line:            "Frankston",
 					DepartCaulfield: fl.departCaulfield.In(melbourneTZ).Format("15:04"),
 				},
-				ArriveAt: fl.arriveMentone.In(melbourneTZ).Format("15:04"),
+				ArriveAt:    fl.arriveMentone.In(melbourneTZ).Format("15:04"),
+				TrackRunRef: fl.runRef,
 			}
 			if len(results) == 0 {
 				r.Disruptions = disruptions
