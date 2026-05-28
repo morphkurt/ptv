@@ -302,6 +302,110 @@
       white-space: nowrap;
     }
 
+    /* ── Board button ───────────────────────────────── */
+    .board-btn {
+      display: block;
+      width: 100%;
+      margin-top: 14px;
+      background: rgba(59,130,246,0.1);
+      border: 1px solid rgba(59,130,246,0.3);
+      color: var(--blue);
+      border-radius: 10px;
+      padding: 9px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      letter-spacing: 0.03em;
+    }
+    .board-btn:active { background: rgba(59,130,246,0.2); }
+
+    .alt-option { cursor: pointer; }
+    .alt-option:active { opacity: 0.7; }
+
+    /* ── In-transit card ────────────────────────────── */
+    .transit-card {
+      background: var(--surface);
+      border: 1px solid var(--blue);
+      border-radius: 16px;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .transit-card::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--blue);
+      border-radius: 16px 0 0 16px;
+    }
+
+    .transit-label {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      color: var(--blue);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .transit-route {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+
+    .transit-arriving {
+      display: flex;
+      align-items: flex-end;
+      gap: 16px;
+      margin-bottom: 4px;
+    }
+
+    .transit-time {
+      font-size: 3.2rem;
+      font-weight: 300;
+      letter-spacing: -0.03em;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .transit-countdown {
+      font-size: 1.1rem;
+      font-weight: 600;
+      padding-bottom: 6px;
+      font-variant-numeric: tabular-nums;
+    }
+    .transit-countdown.ok     { color: var(--green); }
+    .transit-countdown.soon   { color: var(--orange); }
+    .transit-countdown.urgent { color: var(--red); }
+    .transit-countdown.arrived { color: var(--muted); }
+
+    .transit-arr-label {
+      font-size: 0.68rem;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .exit-btn {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 9px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .exit-btn:hover { border-color: var(--red); color: var(--red); }
+
     /* Disruptions */
     .disruption {
       margin-top: 12px;
@@ -811,6 +915,7 @@ let refreshCountdown = REFRESH_SECS;
 let refreshInterval  = null;
 let countdownInterval = null;
 let loading = false;
+let lockedJourney = null; // { origin, destination, depart_at, arrive_at, express, transfer }
 
 // ── Startup ───────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -836,6 +941,20 @@ function startClock() {
       melbourneDate(now);
     if (!customTime) {
       document.getElementById("timeInput").value = `${hhmms.h}:${hhmms.m}`;
+    }
+    // Keep the in-transit countdown live.
+    if (lockedJourney) {
+      const el = document.querySelector(".transit-countdown");
+      if (el) {
+        const minsLeft = minutesUntil(lockedJourney.arrive_at);
+        let cdClass, cdText;
+        if (minsLeft <= 0)      { cdClass = "arrived"; cdText = "Arrived"; }
+        else if (minsLeft <= 3) { cdClass = "urgent";  cdText = `${minsLeft} min`; }
+        else if (minsLeft <= 8) { cdClass = "soon";    cdText = `${minsLeft} min`; }
+        else                    { cdClass = "ok";       cdText = `${minsLeft} min`; }
+        el.className = `transit-countdown ${cdClass}`;
+        el.textContent = cdText;
+      }
     }
   }
   tick();
@@ -1025,18 +1144,23 @@ async function refresh() {
   const btn = document.getElementById("refreshBtn");
   btn.classList.add("spinning");
 
-  const time     = getQueryTime();
   const date     = melbourneDateISO();
-  const realtime = realtimeMode ? "true" : "false";
+  const realtime = "true"; // always use realtime in locked mode; use setting otherwise
 
   try {
-    if (currentStation === "townhall") {
+    if (lockedJourney) {
+      // Silently fetch a fresh arrival estimate for the locked train.
+      await refreshLocked(date);
+      renderLockedView();
+    } else if (currentStation === "townhall") {
+      const time = getQueryTime();
+      const rt   = realtimeMode ? "true" : "false";
       const timeParam = timeMode === "arrive_by"
         ? { arrive_by: time }
         : { depart_at: time };
       const [mentoneJ, sdpJ] = await Promise.allSettled([
-        fetchJourney({ destination: "mentone",      ...timeParam, date, realtime }),
-        fetchJourney({ destination: "sandown_park", ...timeParam, date, realtime }),
+        fetchJourney({ destination: "mentone",      ...timeParam, date, realtime: rt }),
+        fetchJourney({ destination: "sandown_park", ...timeParam, date, realtime: rt }),
       ]);
       renderTownHall(
         mentoneJ.status === "fulfilled" ? mentoneJ.value : null,
@@ -1045,17 +1169,53 @@ async function refresh() {
         sdpJ.status    === "rejected"   ? sdpJ.reason   : null,
       );
     } else {
+      const time = getQueryTime();
+      const rt   = realtimeMode ? "true" : "false";
       const apiFrom = currentStation === "mentone" ? "mentone" : "sandown_park";
-      const j = await fetchJourney({ from: apiFrom, depart_at: time, date, realtime });
-      renderSingle(j);
+      const journeys = await fetchJourney({ from: apiFrom, depart_at: time, date, realtime: rt });
+      renderSingle(journeys);
     }
   } catch(e) {
-    renderError(e.message);
+    if (!lockedJourney) renderError(e.message);
   }
 
   btn.classList.remove("spinning");
   loading = false;
   startCountdown();
+}
+
+async function refreshLocked(date) {
+  const lj = lockedJourney;
+  // Query with a time 15 min before departure to ensure the locked train appears.
+  const [lh, lm] = lj.depart_at.split(":").map(Number);
+  const offsetMin = lh * 60 + lm - 15;
+  const h = Math.floor(((offsetMin % 1440) + 1440) % 1440 / 60);
+  const m = ((offsetMin % 1440) + 1440) % 1440 % 60;
+  const queryTime = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+
+  try {
+    let results;
+    if (lj.origin === "Town Hall") {
+      // Outbound from TH.
+      const dest = lj.destination === "Mentone" ? "mentone" : "sandown_park";
+      if (timeMode === "arrive_by") {
+        results = await fetchJourney({ destination: dest, arrive_by: lj.arrive_at, date, realtime: "true" });
+      } else {
+        results = await fetchJourney({ destination: dest, depart_at: queryTime, date, realtime: "true" });
+      }
+    } else {
+      // Return from station.
+      const from = lj.origin === "Mentone" ? "mentone" : "sandown_park";
+      results = await fetchJourney({ from, depart_at: queryTime, date, realtime: "true" });
+    }
+    // Find the matching journey by departure time.
+    const match = results.find(r => r.depart_at === lj.depart_at);
+    if (match && match.arrive_at) {
+      lockedJourney = { ...lj, arrive_at: match.arrive_at };
+    }
+  } catch(_) {
+    // Keep showing last known arrival.
+  }
 }
 
 // ── Renderers ─────────────────────────────────────────
@@ -1115,14 +1275,15 @@ function journeyCard(journeys) {
   // Alternatives: compact rows showing depart → arrive with express badge and benefit.
   const altHtml = alternatives.length > 0 ? `
     <div class="alt-options">
-      ${alternatives.map(alt => {
+      ${alternatives.map((alt, idx) => {
         const altDiff   = minutesUntil(alt.depart_at);
         const altClass  = altDiff <= 0 ? "gone" : altDiff <= 2 ? "urgent" : altDiff <= 6 ? "soon" : "ok";
         const altTravel = timeDiffMin(alt.depart_at, alt.arrive_at);
         const saving    = travel - altTravel;
         const saveHtml  = saving > 0 ? `<span class="alt-save">saves ${saving}min</span>` : "";
         const minLabel  = altDiff > 0 ? `${altDiff}min` : "now";
-        return `<div class="alt-option">
+        const altJson   = escHtml(JSON.stringify(alt));
+        return `<div class="alt-option" onclick='boardTrain(${JSON.stringify(alt)})' title="Board this train">
           <span class="alt-depart ${altClass}">${alt.depart_at}</span>
           ${alt.express ? '<span class="express-badge">Express</span>' : ''}
           <span class="alt-arrive">→ ${alt.arrive_at}</span>
@@ -1149,6 +1310,7 @@ function journeyCard(journeys) {
       </div>
       ${transferHtml}
       ${altHtml}
+      <button class="board-btn" onclick='boardTrain(${JSON.stringify(j)})'>Board this train</button>
       ${disruptionHtml}
     </div>`;
 }
@@ -1158,6 +1320,63 @@ function errorCard(dest, err) {
     <div class="card">
       <div class="card-dest">→ ${dest.toUpperCase()}</div>
       <p style="color:var(--muted);font-size:0.82rem">${escHtml(String(err?.message || "No trains found"))}</p>
+    </div>`;
+}
+
+// ── Boarding ──────────────────────────────────────────
+function boardTrain(j) {
+  lockedJourney = {
+    origin:      j.origin,
+    destination: j.destination,
+    depart_at:   j.depart_at,
+    arrive_at:   j.arrive_at,
+    express:     j.express || false,
+    transfer:    j.transfer || null,
+  };
+  renderLockedView();
+}
+
+function exitTrain() {
+  lockedJourney = null;
+  refresh();
+}
+
+function renderLockedView() {
+  const lj = lockedJourney;
+  if (!lj) return;
+
+  const minsLeft = minutesUntil(lj.arrive_at);
+  let cdClass, cdText;
+  if (minsLeft <= 0)      { cdClass = "arrived"; cdText = "Arrived"; }
+  else if (minsLeft <= 3) { cdClass = "urgent";  cdText = `${minsLeft} min`; }
+  else if (minsLeft <= 8) { cdClass = "soon";    cdText = `${minsLeft} min`; }
+  else                    { cdClass = "ok";       cdText = `${minsLeft} min`; }
+
+  const transferHtml = lj.transfer ? `
+    <div class="transfer" style="margin-top:14px">
+      <div class="transfer-title">Transfer · ${escHtml(lj.transfer.station)}</div>
+      <div class="transfer-row">
+        <span class="transfer-label">Arrive</span>
+        <span class="transfer-value">${lj.transfer.arrive_caulfield}</span>
+      </div>
+      <div class="transfer-row">
+        <span class="transfer-label">Depart</span>
+        <span class="transfer-value">${lj.transfer.depart_caulfield}</span>
+      </div>
+      <div class="transfer-line">${escHtml(lj.transfer.line)} line</div>
+    </div>` : "";
+
+  document.getElementById("cards").innerHTML = `
+    <div class="transit-card">
+      <div class="transit-label">🔒 In transit${lj.express ? ' <span class="express-badge">Express</span>' : ''}</div>
+      <div class="transit-route">${escHtml(lj.origin)} → ${escHtml(lj.destination)}</div>
+      <div class="transit-arr-label">Arriving</div>
+      <div class="transit-arriving">
+        <div class="transit-time">${lj.arrive_at}</div>
+        <div class="transit-countdown ${cdClass}">${cdText}</div>
+      </div>
+      ${transferHtml}
+      <button class="exit-btn" onclick="exitTrain()">Exit train</button>
     </div>`;
 }
 
