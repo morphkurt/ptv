@@ -406,6 +406,27 @@
     }
     .exit-btn:hover { border-color: var(--red); color: var(--red); }
 
+    /* ── GPS indicator ──────────────────────────────── */
+    .gps-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-left: 6px;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+    .gps-dot.live {
+      background: var(--green);
+      animation: gps-pulse 1.8s ease-in-out infinite;
+    }
+    .gps-dot.no-gps { background: var(--muted); }
+
+    @keyframes gps-pulse {
+      0%, 100% { opacity: 1;   transform: scale(1); }
+      50%       { opacity: 0.3; transform: scale(0.7); }
+    }
+
     /* Disruptions */
     .disruption {
       margin-top: 12px;
@@ -1359,15 +1380,15 @@ function renderLockedView() {
       <div class="transfer-line">${escHtml(lj.transfer.line)} line</div>
     </div>` : "";
 
-  const liveHtml = lj.is_realtime
-    ? `<span style="font-size:0.68rem;color:var(--green);letter-spacing:0.05em;text-transform:uppercase;margin-left:6px">⚡ Live</span>`
-    : `<span style="font-size:0.68rem;color:var(--muted);letter-spacing:0.05em;text-transform:uppercase;margin-left:6px">Scheduled</span>`;
+  const gpsDot = lj.is_realtime
+    ? `<span class="gps-dot live" title="Live GPS"></span>`
+    : `<span class="gps-dot no-gps" title="Scheduled (no GPS)"></span>`;
 
   document.getElementById("cards").innerHTML = `
     <div class="transit-card">
       <div class="transit-label">🔒 In transit${lj.express ? ' <span class="express-badge">Express</span>' : ''}</div>
       <div class="transit-route">${escHtml(lj.origin)} → ${escHtml(lj.destination)}</div>
-      <div class="transit-arr-label">Arriving ${liveHtml}</div>
+      <div class="transit-arr-label" style="display:flex;align-items:center">Arriving${gpsDot}</div>
       <div class="transit-arriving">
         <div class="transit-time">${lj.arrive_at}</div>
         <div class="transit-countdown ${cdClass}">${cdText}</div>
