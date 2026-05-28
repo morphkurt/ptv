@@ -116,6 +116,12 @@ resource "aws_apigatewayv2_route" "travel_times" {
   target    = "integrations/${aws_apigatewayv2_integration.ptv.id}"
 }
 
+resource "aws_apigatewayv2_route" "track" {
+  api_id    = aws_apigatewayv2_api.ptv.id
+  route_key = "GET /track"
+  target    = "integrations/${aws_apigatewayv2_integration.ptv.id}"
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.ptv.id
   name        = "$default"

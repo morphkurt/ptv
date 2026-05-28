@@ -134,6 +134,7 @@ func handleTrack(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewayV2H
 		"mentone":      stopMentone,
 		"sandown_park": stopSandownPark,
 		"townhall":     stopTownHall,
+		"caulfield":    stopCaulfield,
 	}
 	stopID, ok := destStops[destination]
 	if !ok {
@@ -145,24 +146,28 @@ func handleTrack(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewayV2H
 		log.Printf("track GetPattern %s: %v", runRef, err)
 		return errResponse(http.StatusBadRequest, err.Error()), nil
 	}
+	if len(stops) == 0 {
+		log.Printf("track: run %s returned empty pattern (stale run_ref?)", runRef)
+		return errResponse(http.StatusNotFound, "run not found in today's timetable"), nil
+	}
 
 	for _, s := range stops {
 		if s.StopID != stopID {
 			continue
 		}
-		t, err := parseUTC(s.ScheduledDeparture)
+		// Prefer estimated (live GPS) over scheduled; fall back gracefully if neither parses.
+		timeStr, isRealtime := s.EstimatedDeparture, true
+		if timeStr == "" {
+			timeStr, isRealtime = s.ScheduledDeparture, false
+		}
+		t, err := parseUTC(timeStr)
 		if err != nil {
-			break
+			log.Printf("track: run %s stop %d unparseable time %q: %v", runRef, stopID, timeStr, err)
+			continue
 		}
 		result := map[string]interface{}{
 			"arrive_at": t.In(melbourneTZ).Format("15:04"),
-			"realtime":  false,
-		}
-		if s.EstimatedDeparture != "" {
-			if est, err := parseUTC(s.EstimatedDeparture); err == nil {
-				result["arrive_at"] = est.In(melbourneTZ).Format("15:04")
-				result["realtime"] = true
-			}
+			"realtime":  isRealtime,
 		}
 		body, _ := json.Marshal(result)
 		return awsevents.APIGatewayV2HTTPResponse{
@@ -172,6 +177,7 @@ func handleTrack(req awsevents.APIGatewayV2HTTPRequest) (awsevents.APIGatewayV2H
 		}, nil
 	}
 
+	log.Printf("track: run %s (%d stops) does not serve stop %d (%s)", runRef, len(stops), stopID, destination)
 	return errResponse(http.StatusNotFound, "stop not found in run pattern"), nil
 }
 

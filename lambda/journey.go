@@ -57,6 +57,7 @@ type JourneyResult struct {
 	Transfer    *Transfer        `json:"transfer,omitempty"`
 	Disruptions []DisruptionInfo `json:"disruptions,omitempty"`
 	TrackRunRef string           `json:"track_run_ref,omitempty"` // run that reaches the final destination
+	Leg1RunRef  string           `json:"leg1_run_ref,omitempty"`  // first-leg run (transfer routes only)
 }
 
 type Transfer struct {
@@ -283,6 +284,7 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 
 	// Build TH leg pairs sorted by departure DESC (latest first for arrive_by mode).
 	type thLeg struct {
+		runRef          string
 		departTH        time.Time
 		arriveCaulfield time.Time
 	}
@@ -299,7 +301,7 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 		if t.After(arriveBy) {
 			continue
 		}
-		thLegs = append(thLegs, thLeg{t, thCaulfArrs[i]})
+		thLegs = append(thLegs, thLeg{dep.RunRef, t, thCaulfArrs[i]})
 	}
 	sort.Slice(thLegs, func(i, j int) bool { return thLegs[i].departTH.After(thLegs[j].departTH) })
 
@@ -310,6 +312,7 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 		arriveMentone   time.Time
 		express         bool
 		frankRunRef     string
+		thRunRef        string
 	}
 	var options []option
 
@@ -340,6 +343,7 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 				arriveMentone:   fp.arrivalAt,
 				express:         fp.express,
 				frankRunRef:     frankDep.RunRef,
+				thRunRef:        thLegs[k].runRef,
 			})
 			break
 		}
@@ -371,6 +375,7 @@ func planMentone(client *PTVClient, arriveBy, windowStart time.Time, realtime bo
 			},
 			ArriveAt:    o.arriveMentone.In(melbourneTZ).Format("15:04"),
 			TrackRunRef: o.frankRunRef,
+			Leg1RunRef:  o.thRunRef,
 		}
 	}
 	results[0].Disruptions = disruptions
@@ -610,6 +615,7 @@ func planReturnMentone(client *PTVClient, departAt time.Time, realtime bool) ([]
 				},
 				ArriveAt:    cp.arriveTH.In(melbourneTZ).Format("15:04"),
 				TrackRunRef: cp.runRef,
+				Leg1RunRef:  dep.RunRef,
 			}
 			if len(results) == 0 {
 				r.Disruptions = disruptions
@@ -778,6 +784,7 @@ func planOutboundMentone(client *PTVClient, departAt time.Time, realtime bool) (
 
 	// Build TH leg pairs sorted by departure ASC (earliest first for depart_at mode).
 	type thLeg struct {
+		runRef          string
 		departTH        time.Time
 		arriveCaulfield time.Time
 	}
@@ -794,7 +801,7 @@ func planOutboundMentone(client *PTVClient, departAt time.Time, realtime bool) (
 		if t.Before(departAt) {
 			continue
 		}
-		thLegs = append(thLegs, thLeg{t, thCaulfArrs[i]})
+		thLegs = append(thLegs, thLeg{dep.RunRef, t, thCaulfArrs[i]})
 	}
 	sort.Slice(thLegs, func(i, j int) bool { return thLegs[i].departTH.Before(thLegs[j].departTH) })
 
@@ -850,6 +857,7 @@ func planOutboundMentone(client *PTVClient, departAt time.Time, realtime bool) (
 				},
 				ArriveAt:    fl.arriveMentone.In(melbourneTZ).Format("15:04"),
 				TrackRunRef: fl.runRef,
+				Leg1RunRef:  th.runRef,
 			}
 			if len(results) == 0 {
 				r.Disruptions = disruptions

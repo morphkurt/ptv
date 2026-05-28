@@ -48,3 +48,15 @@ func TestMentone(t *testing.T) {
 		)
 	}
 }
+
+func TestPattern967412(t *testing.T) {
+	c := client()
+	stops, err := c.GetPattern("967412")
+	if err != nil {
+		t.Fatalf("GetPattern: %v", err)
+	}
+	fmt.Printf("Pattern for 967412 (%d stops):\n", len(stops))
+	for _, s := range stops {
+		fmt.Printf("  stop_id=%d sched=%q est=%q\n", s.StopID, s.ScheduledDeparture, s.EstimatedDeparture)
+	}
+}

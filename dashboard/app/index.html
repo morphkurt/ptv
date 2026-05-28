@@ -936,7 +936,8 @@ let refreshCountdown = REFRESH_SECS;
 let refreshInterval  = null;
 let countdownInterval = null;
 let loading = false;
-let lockedJourney = null; // { origin, destination, depart_at, arrive_at, express, transfer }
+let lockedJourney = null;    // { origin, destination, depart_at, arrive_at, express, transfer, track_run_ref, leg1_run_ref, dest_key, is_realtime, live_caulfield_at, caulfield_realtime }
+let lastRenderedPhase = 2;  // tracks last rendered phase to detect transitions in clock tick
 
 // ── Startup ───────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -965,16 +966,25 @@ function startClock() {
     }
     // Keep the in-transit countdown live.
     if (lockedJourney) {
-      const el = document.querySelector(".transit-countdown");
-      if (el) {
-        const minsLeft = minutesUntil(lockedJourney.arrive_at);
-        let cdClass, cdText;
-        if (minsLeft <= 0)      { cdClass = "arrived"; cdText = "Arrived"; }
-        else if (minsLeft <= 3) { cdClass = "urgent";  cdText = `${minsLeft} min`; }
-        else if (minsLeft <= 8) { cdClass = "soon";    cdText = `${minsLeft} min`; }
-        else                    { cdClass = "ok";       cdText = `${minsLeft} min`; }
-        el.className = `transit-countdown ${cdClass}`;
-        el.textContent = cdText;
+      const phase = getLockedPhase(lockedJourney);
+      // Re-render when phase transitions (leg-1 → leg-2).
+      if (phase !== lastRenderedPhase) {
+        renderLockedView();
+      } else {
+        const el = document.querySelector(".transit-countdown");
+        if (el) {
+          const target = phase === 1
+            ? (lockedJourney.live_caulfield_at || lockedJourney.transfer?.arrive_caulfield)
+            : lockedJourney.arrive_at;
+          const minsLeft = target ? minutesUntil(target) : 0;
+          let cdClass, cdText;
+          if (minsLeft <= 0)      { cdClass = "arrived"; cdText = "Arrived"; }
+          else if (minsLeft <= 3) { cdClass = "urgent";  cdText = `${minsLeft} min`; }
+          else if (minsLeft <= 8) { cdClass = "soon";    cdText = `${minsLeft} min`; }
+          else                    { cdClass = "ok";       cdText = `${minsLeft} min`; }
+          el.className = `transit-countdown ${cdClass}`;
+          el.textContent = cdText;
+        }
       }
     }
   }
@@ -1204,19 +1214,36 @@ async function refresh() {
   startCountdown();
 }
 
+function getLockedPhase(lj) {
+  if (!lj || !lj.transfer) return 2;
+  return minutesUntil(lj.transfer.arrive_caulfield) > 0 ? 1 : 2;
+}
+
 async function refreshLocked() {
   const lj = lockedJourney;
-  if (!lj.track_run_ref || !lj.dest_key) return;
+  const phase = getLockedPhase(lj);
+  const base = getApiBase();
   try {
-    const base = getApiBase();
-    const resp = await fetch(
-      `${base}/track?run_ref=${encodeURIComponent(lj.track_run_ref)}&destination=${lj.dest_key}`
-    );
-    if (!resp.ok) return;
-    const data = await resp.json();
-    if (data.arrive_at) {
-      lockedJourney = { ...lj, arrive_at: data.arrive_at, is_realtime: !!data.realtime };
-      renderLockedView();
+    if (phase === 1 && lj.leg1_run_ref) {
+      const resp = await fetch(
+        `${base}/track?run_ref=${encodeURIComponent(lj.leg1_run_ref)}&destination=caulfield`
+      );
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.arrive_at) {
+        lockedJourney = { ...lj, live_caulfield_at: data.arrive_at, caulfield_realtime: !!data.realtime };
+        renderLockedView();
+      }
+    } else if (lj.track_run_ref && lj.dest_key) {
+      const resp = await fetch(
+        `${base}/track?run_ref=${encodeURIComponent(lj.track_run_ref)}&destination=${lj.dest_key}`
+      );
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.arrive_at) {
+        lockedJourney = { ...lj, arrive_at: data.arrive_at, is_realtime: !!data.realtime };
+        renderLockedView();
+      }
     }
   } catch(_) {
     // Keep showing last known arrival.
@@ -1337,15 +1364,18 @@ const destKeyMap = {
 
 function boardTrain(j) {
   lockedJourney = {
-    origin:        j.origin,
-    destination:   j.destination,
-    depart_at:     j.depart_at,
-    arrive_at:     j.arrive_at,
-    express:       j.express || false,
-    transfer:      j.transfer || null,
-    track_run_ref: j.track_run_ref || null,
-    dest_key:      destKeyMap[j.destination] || null,
-    is_realtime:   false,
+    origin:            j.origin,
+    destination:       j.destination,
+    depart_at:         j.depart_at,
+    arrive_at:         j.arrive_at,
+    express:           j.express || false,
+    transfer:          j.transfer || null,
+    track_run_ref:     j.track_run_ref || null,
+    leg1_run_ref:      j.leg1_run_ref || null,
+    dest_key:          destKeyMap[j.destination] || null,
+    is_realtime:       false,
+    live_caulfield_at: null,
+    caulfield_realtime: false,
   };
   renderLockedView();
 }
@@ -1359,43 +1389,77 @@ function renderLockedView() {
   const lj = lockedJourney;
   if (!lj) return;
 
-  const minsLeft = minutesUntil(lj.arrive_at);
-  let cdClass, cdText;
-  if (minsLeft <= 0)      { cdClass = "arrived"; cdText = "Arrived"; }
-  else if (minsLeft <= 3) { cdClass = "urgent";  cdText = `${minsLeft} min`; }
-  else if (minsLeft <= 8) { cdClass = "soon";    cdText = `${minsLeft} min`; }
-  else                    { cdClass = "ok";       cdText = `${minsLeft} min`; }
+  const phase = getLockedPhase(lj);
+  lastRenderedPhase = phase;
 
-  const transferHtml = lj.transfer ? `
-    <div class="transfer" style="margin-top:14px">
-      <div class="transfer-title">Transfer · ${escHtml(lj.transfer.station)}</div>
-      <div class="transfer-row">
-        <span class="transfer-label">Arrive</span>
-        <span class="transfer-value">${lj.transfer.arrive_caulfield}</span>
-      </div>
-      <div class="transfer-row">
-        <span class="transfer-label">Depart</span>
-        <span class="transfer-value">${lj.transfer.depart_caulfield}</span>
-      </div>
-      <div class="transfer-line">${escHtml(lj.transfer.line)} line</div>
-    </div>` : "";
+  function cdBits(target) {
+    const m = target ? minutesUntil(target) : 0;
+    if (m <= 0)      return ["arrived", "Arrived"];
+    if (m <= 3)      return ["urgent",  `${m} min`];
+    if (m <= 8)      return ["soon",    `${m} min`];
+    return            ["ok",      `${m} min`];
+  }
 
-  const gpsDot = lj.is_realtime
-    ? `<span class="gps-dot live" title="Live GPS"></span>`
-    : `<span class="gps-dot no-gps" title="Scheduled (no GPS)"></span>`;
+  const expressHtml = lj.express ? ' <span class="express-badge">Express</span>' : '';
 
-  document.getElementById("cards").innerHTML = `
+  let html;
+
+  if (phase === 1 && lj.transfer) {
+    // On leg-1: count down to Caulfield, show connection info below.
+    const caulfTime  = lj.live_caulfield_at || lj.transfer.arrive_caulfield;
+    const [cdClass, cdText] = cdBits(caulfTime);
+    const gpsDot = lj.caulfield_realtime
+      ? `<span class="gps-dot live" title="Live GPS"></span>`
+      : `<span class="gps-dot no-gps" title="Scheduled (no GPS)"></span>`;
+
+    html = `
     <div class="transit-card">
-      <div class="transit-label">🔒 In transit${lj.express ? ' <span class="express-badge">Express</span>' : ''}</div>
-      <div class="transit-route">${escHtml(lj.origin)} → ${escHtml(lj.destination)}</div>
-      <div class="transit-arr-label" style="display:flex;align-items:center">Arriving${gpsDot}</div>
+      <div class="transit-label">🔒 In transit${expressHtml}</div>
+      <div class="transit-route">${escHtml(lj.origin)} → ${escHtml(lj.transfer.station)}</div>
+      <div class="transit-arr-label" style="display:flex;align-items:center;gap:6px">Arriving ${escHtml(lj.transfer.station)}${gpsDot}</div>
+      <div class="transit-arriving">
+        <div class="transit-time">${caulfTime}</div>
+        <div class="transit-countdown ${cdClass}">${cdText}</div>
+      </div>
+      <div class="transfer" style="margin-top:14px">
+        <div class="transfer-title">Then board ${escHtml(lj.transfer.line)} line</div>
+        <div class="transfer-row">
+          <span class="transfer-label">Departs</span>
+          <span class="transfer-value">${lj.transfer.depart_caulfield}</span>
+        </div>
+        <div class="transfer-row">
+          <span class="transfer-label">→ ${escHtml(lj.destination)}</span>
+          <span class="transfer-value">${lj.arrive_at}</span>
+        </div>
+      </div>
+      <button class="exit-btn" onclick="exitTrain()">Exit train</button>
+    </div>`;
+  } else {
+    // On leg-2 (or direct route): count down to final destination.
+    const [cdClass, cdText] = cdBits(lj.arrive_at);
+    const gpsDot = lj.is_realtime
+      ? `<span class="gps-dot live" title="Live GPS"></span>`
+      : `<span class="gps-dot no-gps" title="Scheduled (no GPS)"></span>`;
+    const transferredHtml = lj.transfer ? `
+      <div class="transfer" style="margin-top:14px;opacity:0.6">
+        <div class="transfer-title">Transferred at ${escHtml(lj.transfer.station)} ✓</div>
+      </div>` : "";
+
+    html = `
+    <div class="transit-card">
+      <div class="transit-label">🔒 In transit${expressHtml}</div>
+      <div class="transit-route">${lj.transfer ? escHtml(lj.transfer.station) : escHtml(lj.origin)} → ${escHtml(lj.destination)}</div>
+      <div class="transit-arr-label" style="display:flex;align-items:center;gap:6px">Arriving ${escHtml(lj.destination)}${gpsDot}</div>
       <div class="transit-arriving">
         <div class="transit-time">${lj.arrive_at}</div>
         <div class="transit-countdown ${cdClass}">${cdText}</div>
       </div>
-      ${transferHtml}
+      ${transferredHtml}
       <button class="exit-btn" onclick="exitTrain()">Exit train</button>
     </div>`;
+  }
+
+  document.getElementById("cards").innerHTML = html;
 }
 
 function escHtml(s) {
